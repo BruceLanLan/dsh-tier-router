@@ -1,0 +1,2 @@
+name: tiered (layered routing)
+description: The standard coding agent plus dsh-tier-router: a strong tier for planning/review, a cheap tier for implementation, /advisor consultations, failure auto-escalation, and the high-impact guard.
