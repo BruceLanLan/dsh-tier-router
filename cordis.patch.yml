@@ -1,6 +1,20 @@
-# The dsh-tier-router bundle patch: inserts the tiered model routing plugin
-# row over the profile root. Per-tier provider/model/effort is configured at
-# runtime via the /tier set command or the tier_configure tool.
-- insert:
-    - id: tier-routing
-      name: dsh-tier-router
+# dsh-tier-router is an AGENT-PLANE plugin: it contributes tools, slash
+# commands, a prompt section, and step-routing listeners, all of which only
+# exist in the agent scope. Installing it as a host bundle row therefore
+# activates nothing (this package intentionally ships NO host insert here).
+#
+# To enable it, add one row to the agent preset your sessions use, e.g. for a
+# `tiered` preset copied from `standard`:
+#
+#   - id: tier-routing
+#     name: dsh-tier-router
+#
+# and point the profile's agent-presets default at it:
+#
+#   - id: agent-presets
+#     name: '@deepseek-ai/dsh-agent-presets'
+#     config:
+#       default: tiered
+#
+# Per-tier provider/model/effort is configured at runtime via /tier set or the
+# tier_configure tool and persists in the `tier-router` settings namespace.

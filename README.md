@@ -99,26 +99,36 @@ sequenceDiagram
 
 ## Installation
 
+> **Plane note.** `dsh-tier-router` contributes agent-plane surfaces — tools,
+> slash commands, a prompt section, and step-routing listeners — so it must be
+> composed in the **agent preset** your sessions use, not as a host bundle row.
+> Installing the package alone (or shipping a host insert) activates nothing.
+
 ```sh
-# Local directory install (development / verification)
+# 1. Link the package into your profile (dev: clone this repo and add the path;
+#    once published: dsh plugin --profile web add dsh-tier-router)
 git clone https://github.com/BruceLanLan/dsh-tier-router.git
 cd dsh-tier-router
 dsh plugin --profile web add .
 
-# Restart DSH for the bundle to activate. Once published, one-line install:
-# dsh plugin --profile web add dsh-tier-router
+# 2. Point the profile's default agent preset at one that includes the row.
+#    Either select "tiered" in the session preset picker, or make it the
+#    default: add the following to the profile's cordis.patch.yml —
+#      - id: agent-presets
+#        name: '@deepseek-ai/dsh-agent-presets'
+#        config:
+#          default: tiered
+
+# 3. Restart DSH (kill the process LISTENing on the web port first) so the new
+#    preset mounts; verify with /tier status.
 ```
 
-Uninstall:
+Uninstall: remove the `tier-routing` row from the preset (and `dsh plugin --profile web remove dsh-tier-router` to drop the link).
 
-```sh
-dsh plugin --profile web remove dsh-tier-router
-```
-
-Installation has been verified in practice: `dsh plugin --profile <name> add <path>`
-links the bundle, `dsh --profile <name> --dump-config` shows the
-`- id: tier-routing / name: dsh-tier-router` row composed correctly, module loading is
-smoke-tested, and `npm pack` ships a clean tarball (17KB: lib + patch + README/LICENSE).
+Installation is verified in practice: the package resolves from the profile
+store, a `tiered` preset copied from `standard` with the `- id: tier-routing /
+name: dsh-tier-router` row mounts cleanly, module loading is smoke-tested, and
+`npm pack` ships a clean tarball (lib + patch + README/LICENSE).
 
 ## Usage
 
@@ -222,8 +232,13 @@ The guard's message tells you: switch to the strong tier first (`tier_route stro
 running destructive actions directly.
 
 **Q: `/tier` does not appear after installing the bundle?**
-The bundle activates only after restarting `dsh web`. The dynamic-plugin form is a
-process-local temporary instance and disappears on restart.
+The package is an agent-plane plugin: it must be a row in the agent preset your
+session uses (see Installation). A host bundle row alone activates nothing —
+agent-plane services (`tools`, `commands`, `systemPrompt`) are only reachable
+from the preset scope, and this package ships no host insert by design. After
+adding the row, restart `dsh web` and verify with `/tier status`. (The
+dynamic-plugin form is a process-local temporary instance and disappears on
+restart.)
 
 ## Known limitations
 
