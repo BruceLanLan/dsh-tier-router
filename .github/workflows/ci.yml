@@ -13,6 +13,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The smoke suite imports the real bundle, which needs the harness tool
+      # DSL and schemastery packages (available on the public npm registry).
+      - run: npm install --no-save @deepseek-ai/dsh-tools @deepseek-ai/schemastery
       - run: node --check lib/index.js
       - run: node --check lib/pure.js
       - run: node --test "tests/**/*.test.mjs"
