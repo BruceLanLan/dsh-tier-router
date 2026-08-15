@@ -3,120 +3,137 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-ready-4B32C3)](https://github.com/topics/dsh-plugin)
 
-按任务难度分层路由模型：**强档（默认 deepseek-v4-pro）负责规划 / 架构 / 评审**，
-**弱档（默认 deepseek-v4-flash）负责日常编码实现**。灵感来自 Claude Code 的
-`/advisor`（困难决策时咨询更强模型）与 `opusplan`（计划模式用强模型、执行切便宜模型），
-在 DeepSeek Harness 里用官方机制实现，并扩展了难度升级门、失败自动升级与 subagent 分层。
+Routes model steps by task difficulty: a **strong tier (deepseek-v4-pro by default)
+handles planning / architecture / review**, while a **cheap tier (deepseek-v4-flash by
+default) handles day-to-day implementation**. Inspired by Claude Code's `/advisor`
+(consult a stronger model for hard decisions) and `opusplan` (strong model in plan mode,
+cheap model for execution), implemented on DeepSeek Harness through its official seams,
+with an escalation gate, failure auto-escalation, and subagent tiering on top.
 
-## 工作原理
+English · [中文](README.zh.md)
+
+## How it works
 
 ```mermaid
 flowchart LR
-    subgraph main["主会话（header 驱动）"]
-      U["用户消息"] --> IN["agent/inbox/inserted"]
-      IN -->|"auto 模式"| HW["写入 session request/header"]
-      PM["plan/mode 翻转"] --> HW
-      HW --> API["api-proxy 选择层"]
-      API --> STEP["每步模型 = header 档位"]
+    subgraph main["Main session (header-driven)"]
+      U["User message"] --> IN["agent/inbox/inserted"]
+      IN -->|"auto mode"| HW["write session request/header"]
+      PM["plan/mode flip"] --> HW
+      HW --> API["api-proxy selection layer"]
+      API --> STEP["each step's model = header tier"]
     end
-    subgraph child["子代理（agent/request 直改）"]
-      W["tier_worker 派发"] -->|"agentOptions 注入"| C["子代理"]
-      C --> AR["agent/request 瀑布"]
-      AR -->|"按档位替换 provider/model"| STEP2["子代理步骤"]
+    subgraph child["Subagents (agent/request swap)"]
+      W["tier_worker dispatch"] -->|"agentOptions injection"| C["subagent"]
+      C --> AR["agent/request waterfall"]
+      AR -->|"swap provider/model per tier"| STEP2["subagent steps"]
     end
-    G["tools/pre-execute 守卫"] -.->|"弱档 + 高危模式"| DENY["deny + 升级提示"]
-    E["agent/error 连续失败"] -.->|"阈值内"| ESC["临时强档（TTL）"]
+    G["tools/pre-execute guard"] -.->|"cheap tier + high-impact pattern"| DENY["deny + escalation hint"]
+    E["agent/error failures"] -.->|"within window"| ESC["temporary strong tier (TTL)"]
 ```
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant S as 会话（主代理）
-    participant A as 强档 v4-pro
-    participant C as 弱档 v4-flash
-    U->>S: /tier plan（进入计划模式）
-    S->>S: 写 header → strong
-    S->>A: 规划 / 架构 / 设计方案
-    U->>S: 批准计划，退出计划模式
-    S->>S: 写 header → cheap
-    S->>C: 日常编码实现
-    S->>A: tier_advisor（困难决策）/ tier_review（收尾评审）
-    Note over S,C: 高危操作（rm -rf / 凭据文件）被守卫拦截，要求先切强档
+    participant U as User
+    participant S as Session (main agent)
+    participant A as Strong v4-pro
+    participant C as Cheap v4-flash
+    U->>S: /tier plan (enter plan mode)
+    S->>S: write header -> strong
+    S->>A: planning / architecture / design
+    U->>S: approve plan, leave plan mode
+    S->>S: write header -> cheap
+    S->>C: routine implementation
+    S->>A: tier_advisor (hard decisions) / tier_review (final review)
+    Note over S,C: high-impact actions (rm -rf / credential files) are denied by the guard until the strong tier is selected
 ```
 
-## 功能
+## Features
 
-- **自动分层路由（auto 模式，opusplan 式）**：进入计划模式时步骤跑强档，执行步骤跑弱档。
-  主会话通过写入会话 `request/header` 生效（api-proxy 选择层的官方缝隙，参考社区
-  `dsh-model-router` 的做法）；子代理通过 `agent/request` 每步切换。
-- **按会话隔离（per-session）**：`/tier strong|cheap|auto|off` 只影响当前会话，
-  **进程内其他会话保持自己的档位**（全局默认 `auto`）。"别的会话被切换"不会再发生——
-  不想被管理的会话发一次 `/tier off` 即可退出。
-- **按需咨询（advisor 式）**：`/advisor <问题>` 命令 + `tier_advisor` 工具，把一个问题
-  加已有证据交给强档模型，返回建议 / 证据 / 风险 / 验收条件；实现仍由当前档执行。
-- **评审阶段**：`tier_review` 工具 + `/tier review <焦点>`，强档模型对变更与验证结果
-  给出 `APPROVE / NEEDS-CHANGES / BLOCKED` 及分级问题清单。
-- **失败自动升级**：同一会话在窗口内连续出错（默认 60s 内 2 次）自动临时切到强档
-  （默认 180s），TTL 过期自动回落；`off` 会话不参与。
-- **可配置双档**：`/tier set <strong|cheap> <provider> <model> [effort]` 或
-  `tier_configure` 工具，任意已注册 provider / model 均可（默认
-  `deepseek-official/deepseek-v4-pro(max)` 与 `deepseek-official/deepseek-v4-flash(high)`）。
-- **高危升级门（确定性守卫）**：当执行档为弱档时，`tools/pre-execute` 拦截高危工具调用，
-  要求先切到强档再执行，不依赖模型自觉。守卫规则（纯逻辑 `lib/pure.js`，单元测试覆盖）：
-  - `rm -rf` 全拼写：合并参数（`-rf`）、拆分参数（`-r -f`）、大小写（`-R`）、长参数
-    （`--recursive --force`）、前缀命令（`sudo rm -rf`、`busybox rm`）；
-  - 破坏性命令：`mkfs`、`dd if=`、`sudo`、`shutdown/reboot/halt`、`git push --force/-f`、
-    `curl|sh`、`wget|sh`、`chmod` 到 `.ssh`、`chown`；
-  - 敏感路径：`.env`（`.env.example/.template` 白名单例外）、`credentials`/`secrets`
-    常见扩展名、`.ssh/`、`id_rsa` 等私钥（大小写不敏感）、`.pem`、`.key`；
-  - 散文不误伤：`echo rm -rf`、`grep sudo` 之类不触发（锚定命令位置）。
-- **subagent 分层**：`tier_worker` 按档派发子代理（`agentOptions` 注入模型），支持
-  `outputSchema`（结构化结果）、`toolFilter`（限制子代理工具）、`maxDepth`（深度上限）、
-  `persona`（子代理人格）；`/tier subagent <inherit|cheap|strong>` 设置所有子代理步骤的
-  全局档位策略。
-- **难度升级规则注入**：向系统提示词注入升级门（歧义未消、架构 / 安全 / 数据完整性、
-  两次失败、收尾高风险等条件），模型在决策点调用 `tier_advisor` / `tier_review`。
+- **Automatic tiered routing (auto mode, opusplan-style)**: steps run on the strong tier
+  while plan mode is active and on the cheap tier during execution. Main sessions are
+  routed by writing the session `request/header` (the official seam the api-proxy selection
+  layer reads, as community plugins like `dsh-model-router` do); subagents are switched
+  per step at the `agent/request` waterfall.
+- **Per-session scoping**: `/tier strong|cheap|auto|off` affects **only the current
+  session**; other sessions in the process keep their own tier (global default `auto`).
+  Sessions that should not be managed can opt out with a single `/tier off`.
+- **On-demand advice (advisor-style)**: the `/advisor <question>` command and the
+  `tier_advisor` tool hand one decision question plus gathered evidence to the strong
+  tier and return advice / evidence / risks / acceptance criteria; implementation stays
+  on the current tier.
+- **Review phase**: the `tier_review` tool and `/tier review <focus>` ask the strong tier
+  to review a change set and return an `APPROVE / NEEDS-CHANGES / BLOCKED` verdict with
+  issues ranked by severity.
+- **Failure auto-escalation**: repeated step errors within a window (default 2 errors /
+  60s) temporarily escalate the session to the strong tier (default 180s), expiring via
+  TTL; sessions in `off` mode never escalate.
+- **Configurable tiers**: `/tier set <strong|cheap> <provider> <model> [effort]` or the
+  `tier_configure` tool can point either tier at any registered provider/model (defaults:
+  `deepseek-official/deepseek-v4-pro(max)` and `deepseek-official/deepseek-v4-flash(high)`).
+- **High-impact escalation gate (deterministic guard)**: while the cheap tier executes,
+  `tools/pre-execute` denies high-impact tool calls and requires switching to the strong
+  tier first — no reliance on model self-discipline. Guard rules (pure logic in
+  `lib/pure.js`, unit-tested):
+  - every `rm -rf` spelling: combined flags (`-rf`), split flags (`-r -f`), case variants
+    (`-R`), long flags (`--recursive --force`), runner prefixes (`sudo rm -rf`, `busybox rm`);
+  - destructive commands: `mkfs`, `dd if=`, `sudo`, `shutdown/reboot/halt`,
+    `git push --force/-f`, `curl|sh`, `wget|sh`, `chmod` on `.ssh`, `chown`;
+  - sensitive paths: `.env` (whitelist for `.env.example/.template`), `credentials`/`secrets`
+    with common extensions, `.ssh/`, private keys such as `id_rsa` (case-insensitive),
+    `.pem`, `.key`;
+  - prose never false-positives: `echo rm -rf`, `grep sudo` do not trigger
+    (command-position anchored).
+- **Subagent tiering**: `tier_worker` dispatches bounded task packets to a fresh subagent
+  on a chosen tier (`agentOptions` model injection), with `outputSchema` (structured
+  results), `toolFilter` (restrict worker tools), `maxDepth` (delegation-depth cap) and
+  `persona` (per-child persona); `/tier subagent <inherit|cheap|strong>` sets the global
+  policy for all other subagent steps.
+- **Escalation rules injected into the system prompt**: ambiguity unresolved,
+  architecture / security / data integrity, two failed attempts, high-risk completion —
+  the model is guided to call `tier_advisor` / `tier_review` at decision points.
 
-## 安装
+## Installation
 
 ```sh
-# 本地目录安装（开发 / 验证）
+# Local directory install (development / verification)
 git clone https://github.com/BruceLanLan/dsh-tier-router.git
 cd dsh-tier-router
 dsh plugin --profile web add .
 
-# 重启 DSH 后生效；发布后可一行安装
+# Restart DSH for the bundle to activate. Once published, one-line install:
 # dsh plugin --profile web add dsh-tier-router
 ```
 
-卸载：
+Uninstall:
 
 ```sh
 dsh plugin --profile web remove dsh-tier-router
 ```
 
-安装已实测：`dsh plugin --profile <name> add <path>` 成功链接 bundle，
-`dsh --profile <name> --dump-config` 确认插件行 `- id: tier-routing / name: dsh-tier-router`
-正确插入组合；模块加载冒烟通过；`npm pack` 内容干净（17KB：lib + patch + README/LICENSE）。
+Installation has been verified in practice: `dsh plugin --profile <name> add <path>`
+links the bundle, `dsh --profile <name> --dump-config` shows the
+`- id: tier-routing / name: dsh-tier-router` row composed correctly, module loading is
+smoke-tested, and `npm pack` ships a clean tarball (17KB: lib + patch + README/LICENSE).
 
-## 使用
+## Usage
 
-### 斜杠命令（在输入框直接输入，只作用于当前会话）
+### Slash commands (typed in the composer; they affect only the current session)
 
 ```
-/advisor <决策问题>                          # 强档模型一次咨询
-/tier status                                # 查看路由状态、升级状态与诊断计数器
-/tier strong | cheap                        # 本会话强制走某档（可选持久化为会话默认）
-/tier auto                                  # 本会话恢复自动（计划模式→强档，执行→弱档）
-/tier off                                   # 本会话关闭路由并恢复默认模型（不影响其他会话）
-/tier plan                                  # auto + 进入计划模式，并立即应用强档 header
-/tier models                                # 列出已注册 provider 与其模型
+/advisor <question>                          # one strong-tier consultation
+/tier status                                # routing state, escalation state, diagnostics
+/tier strong | cheap                        # force one tier for this session (optionally persist as session default)
+/tier auto                                  # restore auto for this session (plan -> strong, execution -> cheap)
+/tier off                                   # disable routing for this session, restore its default model (other sessions unaffected)
+/tier plan                                  # auto + enter plan mode, apply the strong header immediately
+/tier models                                # list registered providers and their models
 /tier set <strong|cheap> <provider> <model> [effort]
-/tier subagent <inherit|cheap|strong>       # 子代理全局档位策略
-/tier review <评审焦点>                       # 强档模型评审
+/tier subagent <inherit|cheap|strong>       # global policy for subagent steps
+/tier review <focus>                        # strong-tier review
 ```
 
-示例输出（`/tier status`）：
+Sample output (`/tier status`):
 
 ```
 Tiered model routing
@@ -129,81 +146,87 @@ Tiered model routing
   providers: deepseek-official, opencode-go, minimax
 ```
 
-### 模型工具（由模型在需要时调用）
+### Model tools (called by the model when needed)
 
-| 工具 | 用途 |
+| Tool | Purpose |
 | --- | --- |
-| `tier_advisor` | 强档咨询：一个问题 + 证据 → 建议 / 风险 / 验收条件 |
-| `tier_review` | 强档评审：变更集 + 验证结果 → 判定与分级问题 |
-| `tier_route` | 设置**本会话**档位（strong/cheap/auto/off，可选持久化） |
-| `tier_configure` | 重配任意档位的 provider/model/effort 与 subagent 策略 |
-| `tier_worker` | 按档派发子代理执行有界任务包；支持 outputSchema / toolFilter / maxDepth / persona |
-| `tier_status` | 只读诊断：全局与本会话档位、升级状态、监听器计数器、生效档位 |
+| `tier_advisor` | Strong-tier consultation: one question + evidence -> advice / risks / acceptance criteria |
+| `tier_review` | Strong-tier review: change set + validation results -> verdict with ranked issues |
+| `tier_route` | Set **this session's** tier (strong/cheap/auto/off, optionally persisted) |
+| `tier_configure` | Reconfigure either tier's provider/model/effort and the subagent policy |
+| `tier_worker` | Dispatch a bounded task packet to a subagent on a chosen tier; supports outputSchema / toolFilter / maxDepth / persona |
+| `tier_status` | Read-only diagnostics: global & session tiers, escalation state, listener counters, effective tier |
 
-## 配置
+## Configuration
 
-运行时配置（无需重启）：
+Runtime configuration (no restart needed):
 
 ```sh
 /tier set strong deepseek-official deepseek-v4-pro max
 /tier set cheap deepseek-official deepseek-v4-flash high
 ```
 
-`tier_route strong|cheap` 默认会把选择持久化为会话默认模型（写入
-`agent-default-model` 设置）。`tier_configure` 支持 `persist: true` 同样持久化。
-失败自动升级参数（阈值 / 窗口 / 时长）当前为内建常量，后续版本可配置化。
+`tier_route strong|cheap` persists the choice as the session default model by default
+(writes the `agent-default-model` setting); `tier_configure` supports `persist: true`
+for the same. Failure auto-escalation parameters (threshold / window / TTL) are currently
+built-in constants; configurable in a later version.
 
-## 测试
+## Tests
 
 ```sh
-npm test        # node:test — 18 个用例：守卫正反矩阵、档位决策优先级、per-session 覆盖
-npm run check   # 语法检查 lib/index.js 与 lib/pure.js
+npm test        # node:test — 18 cases: guard positive/negative matrix, tier decision precedence, per-session overrides
+npm run check   # syntax check for lib/index.js and lib/pure.js
 ```
 
-会话内严格多轮实测（动态插件形态）记录：
+Verified in live multi-round sessions (dynamic-plugin form):
 
-| 项目 | 结果 |
+| Area | Result |
 | --- | --- |
-| 主会话每步路由（持久日志证据） | ✅ `request/header` 事件显示从 pro 切到 flash |
-| 守卫矩阵（auto/strong/off） | ✅ auto 拒 / strong 放行 / off 放行并恢复默认档 / 恢复 auto 拒 |
-| 守卫加固（拆分参数、前缀 rm、散文、.env 白名单、大小写） | ✅ 7/7 实测通过 |
-| 工具正向 | ✅ advisor/review 真调强档；route 四种模式；configure 改档；worker 在 spawn 与 fork 两个 provider 上完成 |
-| worker 新参数 | ✅ outputSchema 结构化结果、toolFilter 限制工具、maxDepth 拒绝超限、非法 filter 干净报错 |
-| 工具反向用例 | ✅ 非法 provider 拒绝、非法 subagent provider 报错 |
-| subagent 分层 | ✅ 弱档跑 flash、强档跑 pro（子代理日志与返回值证实） |
-| 失败升级事件路径 | ✅ `agent/error` 真实触发、计数器自增、off 模式正确跳过 |
-| 生命周期 | ✅ stop 后守卫与工具消失；重新 run 全部恢复且守卫生效 |
-| 持久化 | ✅ `agent-default-model` 写入成功 |
-| 跨回合监听器存活 | ✅ 诊断计数器跨回合持续自增 |
+| Main-session per-step routing (durable log evidence) | ✅ `request/header` events show the pro -> flash switch |
+| Guard matrix (auto/strong/off) | ✅ auto denies / strong allows / off allows + restores default / auto-restored denies |
+| Guard hardening (split flags, runner prefixes, prose, .env whitelist, case) | ✅ 7/7 live probes |
+| Tools, positive paths | ✅ advisor/review hit the strong tier; route modes; configure; worker on both spawn and fork providers |
+| Worker options | ✅ outputSchema structured result, toolFilter restriction, maxDepth rejection, invalid filter error |
+| Tools, negative paths | ✅ invalid provider rejected, invalid subagent provider error |
+| Subagent tiering | ✅ cheap tier on flash, strong tier on pro (child logs + return values) |
+| Failure-escalation event path | ✅ `agent/error` fires, counters increment, off mode correctly skips |
+| Lifecycle | ✅ stop removes guard & tools; re-run restores everything and the guard works |
+| Persistence | ✅ `agent-default-model` written |
+| Cross-turn listener survival | ✅ diagnostic counters keep incrementing across turns |
 
 ## FAQ
 
-**Q: 为什么我另一个会话的模型被自动切换了？**
-早期版本是进程级全局模式。v0.3.0 起 `/tier` 命令只作用于**当前会话**，
-其他会话默认 `auto` 且互不影响；不想被管理的会话输入 `/tier off` 即可退出。
+**Q: Why was another session's model switched automatically?**
+Early versions were process-global. Since v0.3.0 `/tier` commands scope to the **current
+session** only; other sessions default to `auto` independently. A session that should not
+be managed runs `/tier off` to opt out.
 
-**Q: 切换档位后没有立刻生效？**
-档位切换在步骤构建前写入会话 header，从**下一步**开始生效（一步延迟）。
+**Q: The tier switch did not take effect immediately?**
+Tier switches are written to the session header before the step is built, so they apply
+from the **next step** (one-step delay).
 
-**Q: 想用订阅渠道的模型（如 OpenCode Go / MiniMax）？**
-先 `/tier models` 确认 provider 已注册、模型已配置，再
-`/tier set cheap opencode-go deepseek-v4-flash`。pi-ai 类 provider 必须在
-settings.yaml 中声明 `baseURL`/`api`/`models`，否则任何模型 id 都会被拒绝。
+**Q: How do I use subscription-channel models (OpenCode Go / MiniMax)?**
+Run `/tier models` to confirm the provider is registered and its models are configured,
+then `/tier set cheap opencode-go deepseek-v4-flash`. pi-ai-style providers must declare
+`baseURL` / `api` / `models` in settings.yaml, otherwise every model id is rejected.
 
-**Q: 高危操作被拦了怎么办？**
-守卫的提示会告诉你：先 `tier_route` 切到 `strong`（或 `/tier strong`）再重试——
-拦截本身就是为了避免弱档模型直接执行破坏性操作。
+**Q: A high-impact action was blocked. What now?**
+The guard's message tells you: switch to the strong tier first (`tier_route strong` or
+`/tier strong`) and re-issue — the block exists precisely to keep the cheap tier from
+running destructive actions directly.
 
-**Q: 装完 bundle 后 `/tier` 不出现？**
-bundle 需要重启 `dsh web` 才激活；动态插件形态则是进程内临时实例，重启即消失。
+**Q: `/tier` does not appear after installing the bundle?**
+The bundle activates only after restarting `dsh web`. The dynamic-plugin form is a
+process-local temporary instance and disappears on restart.
 
-## 已知限制
+## Known limitations
 
-- 档位切换从下一步生效（header 在步骤构建前写入）。
-- 子代理全局档位策略（`/tier subagent`）是进程级的；worker 的单次派发档位始终优先。
-- 失败自动升级的完整"失败→自愈"现场序列在会话内已验证事件路径与单元逻辑，端到端
-  现场触发建议按 FAQ 操作验证。
+- Tier switches take effect from the next step (the header is written before the step builds).
+- The subagent global policy (`/tier subagent`) is process-wide; a worker's per-dispatch
+  tier always wins.
+- The full live "fail -> self-heal" sequence for failure auto-escalation has been verified
+  at the event path and unit-logic level; trigger it live per the FAQ if desired.
 
-## 许可
+## License
 
 MIT
