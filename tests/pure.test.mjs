@@ -136,6 +136,13 @@ test('per-session mode overrides the global default', () => {
   assert.equal(resolveTierSpec({ sessionMode: 'off', escalated: true }), null)
 })
 
+test('explicit per-session mode is immune to plan-mode flips', () => {
+  // The plan/mode handler must route through resolveTierSpec with the
+  // event's active flag, not hard-code plan state over the session mode.
+  assert.equal(resolveTierSpec({ sessionMode: 'cheap', mode: 'auto', planActive: true }), 'cheap')
+  assert.equal(resolveTierSpec({ sessionMode: 'strong', mode: 'auto', planActive: false }), 'strong')
+})
+
 test('escalation forces strong before policy/mode', () => {
   assert.equal(resolveTierSpec({ escalated: true, isChild: true, subagentPolicy: 'cheap', mode: 'auto', planActive: false }), 'strong')
   assert.equal(resolveTierSpec({ escalated: true, mode: 'cheap' }), 'strong')
