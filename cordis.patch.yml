@@ -18,3 +18,4 @@
 #
 # Per-tier provider/model/effort is configured at runtime via /tier set or the
 # tier_configure tool and persists in the `tier-router` settings namespace.
+[]
