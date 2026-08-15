@@ -60,22 +60,24 @@ sequenceDiagram
   给出 `APPROVE / NEEDS-CHANGES / BLOCKED` 及分级问题清单。
 - **失败自动升级**：同一会话在窗口内连续出错（默认 60s 内 2 次）自动临时切到强档
   （默认 180s），TTL 过期自动回落；`off` 会话不参与。
-- **可配置双档**：`/tier set <strong|cheap> <provider> <model> [effort]` 或
+- **可配置双档（持久化）**：`/tier set <strong|cheap> <provider> <model> [effort]` 或
   `tier_configure` 工具，任意已注册 provider / model 均可（默认
   `deepseek-official/deepseek-v4-pro(max)` 与 `deepseek-official/deepseek-v4-flash(high)`）。
+  配置持久化在 `tier-router` settings 命名空间，重启不丢；传 `sessionOnly: true` 可只改内存。
 - **高危升级门（确定性守卫）**：当执行档为弱档时，`tools/pre-execute` 拦截高危工具调用，
   要求先切到强档再执行，不依赖模型自觉。守卫规则（纯逻辑 `lib/pure.js`，单元测试覆盖）：
   - `rm -rf` 全拼写：合并参数（`-rf`）、拆分参数（`-r -f`）、大小写（`-R`）、长参数
     （`--recursive --force`）、前缀命令（`sudo rm -rf`、`busybox rm`）；
   - 破坏性命令：`mkfs`、`dd if=`、`sudo`、`shutdown/reboot/halt`、`git push --force/-f`、
-    `curl|sh`、`wget|sh`、`chmod` 到 `.ssh`、`chown`；
+    `git clean -f*`、`find ... -delete` / `find ... -exec rm`、`python -c` 里的
+    `shutil.rmtree` / `os.remove`、`curl|sh`、`wget|sh`、`chmod` 到 `.ssh`、`chown`；
   - 敏感路径：`.env`（`.env.example/.template` 白名单例外）、`credentials`/`secrets`
     常见扩展名、`.ssh/`、`id_rsa` 等私钥（大小写不敏感）、`.pem`、`.key`；
   - 散文不误伤：`echo rm -rf`、`grep sudo` 之类不触发（锚定命令位置）。
 - **subagent 分层**：`tier_worker` 按档派发子代理（`agentOptions` 注入模型），支持
   `outputSchema`（结构化结果）、`toolFilter`（限制子代理工具）、`maxDepth`（深度上限）、
-  `persona`（子代理人格）；`/tier subagent <inherit|cheap|strong>` 设置所有子代理步骤的
-  全局档位策略。
+  `persona`（子代理人格）、`background`（jobs 后台执行）；
+  `/tier subagent <inherit|cheap|strong>` 设置所有子代理步骤的全局档位策略。
 - **难度升级规则注入**：向系统提示词注入升级门（歧义未消、架构 / 安全 / 数据完整性、
   两次失败、收尾高风险等条件），模型在决策点调用 `tier_advisor` / `tier_review`。
 
@@ -151,14 +153,15 @@ Tiered model routing
 /tier set cheap deepseek-official deepseek-v4-flash high
 ```
 
-`tier_route strong|cheap` 默认会把选择持久化为会话默认模型（写入
-`agent-default-model` 设置）。`tier_configure` 支持 `persist: true` 同样持久化。
+`/tier set` 与 `tier_configure` 会把双档配置持久化到 `tier-router` settings 命名空间
+（重启不丢；`sessionOnly: true` 可只改内存）。`tier_route strong|cheap` 只影响当前会话
+且默认不持久化，传 `persist: true` 才写入会话默认模型（`agent-default-model`）。
 失败自动升级参数（阈值 / 窗口 / 时长）当前为内建常量，后续版本可配置化。
 
 ## 测试
 
 ```sh
-npm test        # node:test — 18 个用例：守卫正反矩阵、档位决策优先级、per-session 覆盖
+npm test        # node:test — 20 个用例：守卫正反矩阵、档位决策优先级、per-session 覆盖
 npm run check   # 语法检查 lib/index.js 与 lib/pure.js
 ```
 

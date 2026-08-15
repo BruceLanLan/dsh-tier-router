@@ -68,9 +68,11 @@ sequenceDiagram
 - **Failure auto-escalation**: repeated step errors within a window (default 2 errors /
   60s) temporarily escalate the session to the strong tier (default 180s), expiring via
   TTL; sessions in `off` mode never escalate.
-- **Configurable tiers**: `/tier set <strong|cheap> <provider> <model> [effort]` or the
+- **Configurable tiers (durable)**: `/tier set <strong|cheap> <provider> <model> [effort]` or the
   `tier_configure` tool can point either tier at any registered provider/model (defaults:
   `deepseek-official/deepseek-v4-pro(max)` and `deepseek-official/deepseek-v4-flash(high)`).
+  Configuration persists in the `tier-router` settings namespace and survives restarts
+  (pass `sessionOnly: true` for a transient change).
 - **High-impact escalation gate (deterministic guard)**: while the cheap tier executes,
   `tools/pre-execute` denies high-impact tool calls and requires switching to the strong
   tier first — no reliance on model self-discipline. Guard rules (pure logic in
@@ -78,7 +80,9 @@ sequenceDiagram
   - every `rm -rf` spelling: combined flags (`-rf`), split flags (`-r -f`), case variants
     (`-R`), long flags (`--recursive --force`), runner prefixes (`sudo rm -rf`, `busybox rm`);
   - destructive commands: `mkfs`, `dd if=`, `sudo`, `shutdown/reboot/halt`,
-    `git push --force/-f`, `curl|sh`, `wget|sh`, `chmod` on `.ssh`, `chown`;
+    `git push --force/-f`, `git clean -f*`, `find ... -delete` / `find ... -exec rm`,
+    `python -c` with `shutil.rmtree` / `os.remove`, `curl|sh`, `wget|sh`,
+    `chmod` on `.ssh`, `chown`;
   - sensitive paths: `.env` (whitelist for `.env.example/.template`), `credentials`/`secrets`
     with common extensions, `.ssh/`, private keys such as `id_rsa` (case-insensitive),
     `.pem`, `.key`;
@@ -86,9 +90,9 @@ sequenceDiagram
     (command-position anchored).
 - **Subagent tiering**: `tier_worker` dispatches bounded task packets to a fresh subagent
   on a chosen tier (`agentOptions` model injection), with `outputSchema` (structured
-  results), `toolFilter` (restrict worker tools), `maxDepth` (delegation-depth cap) and
-  `persona` (per-child persona); `/tier subagent <inherit|cheap|strong>` sets the global
-  policy for all other subagent steps.
+  results), `toolFilter` (restrict worker tools), `maxDepth` (delegation-depth cap),
+  `persona` (per-child persona) and `background` (run via the jobs service);
+  `/tier subagent <inherit|cheap|strong>` sets the global policy for all other subagent steps.
 - **Escalation rules injected into the system prompt**: ambiguity unresolved,
   architecture / security / data integrity, two failed attempts, high-risk completion —
   the model is guided to call `tier_advisor` / `tier_review` at decision points.
@@ -166,15 +170,17 @@ Runtime configuration (no restart needed):
 /tier set cheap deepseek-official deepseek-v4-flash high
 ```
 
-`tier_route strong|cheap` persists the choice as the session default model by default
-(writes the `agent-default-model` setting); `tier_configure` supports `persist: true`
-for the same. Failure auto-escalation parameters (threshold / window / TTL) are currently
-built-in constants; configurable in a later version.
+`/tier set` and `tier_configure` persist the tier configuration in the `tier-router`
+settings namespace (survives restarts; pass `sessionOnly: true` for a transient change).
+`tier_route strong|cheap` scopes to the current session and does NOT persist by default;
+pass `persist: true` to also write the session default model (`agent-default-model`).
+Failure auto-escalation parameters (threshold / window / TTL) are currently built-in
+constants; configurable in a later version.
 
 ## Tests
 
 ```sh
-npm test        # node:test — 18 cases: guard positive/negative matrix, tier decision precedence, per-session overrides
+npm test        # node:test — 20 cases: guard positive/negative matrix, tier decision precedence, per-session overrides
 npm run check   # syntax check for lib/index.js and lib/pure.js
 ```
 

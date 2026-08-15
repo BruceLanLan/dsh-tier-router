@@ -63,6 +63,22 @@ test('denies other destructive/system commands', () => {
   assert.ok(isHighImpact('bash', { command: 'chmod 600 ~/.ssh/keys' }))
 })
 
+test('denies equivalent destructive patterns', () => {
+  assert.ok(isHighImpact('bash', { command: 'find /tmp -name "*.log" -delete' }))
+  assert.ok(isHighImpact('bash', { command: 'find . -name cache -exec rm -rf {} +' }))
+  assert.ok(isHighImpact('bash', { command: 'git clean -fdx' }))
+  assert.ok(isHighImpact('bash', { command: 'python3 -c "import shutil; shutil.rmtree(\'/x\')"' }))
+  assert.ok(isHighImpact('bash', { command: 'python -c "import os; os.remove(\'/x\')"' }))
+})
+
+test('allows benign equivalents and prose', () => {
+  assert.equal(isHighImpact('bash', { command: 'git clean -n' }), null)
+  assert.equal(isHighImpact('bash', { command: 'find . -name "*.js"' }), null)
+  assert.equal(isHighImpact('bash', { command: 'git clean --dry-run' }), null)
+  assert.equal(isHighImpact('bash', { command: 'echo find -delete is just text' }), null)
+  assert.equal(isHighImpact('bash', { command: 'python3 -c "print(1)"' }), null)
+})
+
 test('allows benign system-adjacent commands and prose', () => {
   assert.equal(isHighImpact('bash', { command: 'git push origin main' }), null)
   assert.equal(isHighImpact('bash', { command: 'chmod +x script.sh' }), null)
