@@ -83,25 +83,38 @@ sequenceDiagram
 
 ## 安装
 
+> **作用域说明**：`dsh-tier-router` 贡献的是 **agent 层**能力——工具、斜杠命令、
+> 提示词段落、逐步路由监听器——必须放在你的会话所用的 **agent preset** 里，
+> 不能当作 host bundle 行安装。只装包（或依赖 host 插入行）不会激活任何功能。
+
 ```sh
-# 本地目录安装（开发 / 验证）
+# 1. 把包链接进你的 profile（开发：克隆本仓库后 add 本地路径；发布后：一行安装）
 git clone https://github.com/BruceLanLan/dsh-tier-router.git
 cd dsh-tier-router
 dsh plugin --profile web add .
 
-# 重启 DSH 后生效；发布后可一行安装
-# dsh plugin --profile web add dsh-tier-router
+# 2. 把仓库自带的 preset（standard + tier-routing 行）拷进用户 preset 根目录
+#    （${DSH_HOME:-$HOME/.dsh}/.agent-presets/）：
+cp -R agent-presets/tiered "${DSH_HOME:-$HOME/.dsh}/.agent-presets/"
+
+# 3. 设为默认 preset（加入 profile 的 cordis.patch.yml）：
+#      - id: agent-presets
+#        name: '@deepseek-ai/dsh-agent-presets'
+#        config:
+#          default: tiered
+#    （或在会话预设选择器里手动选 "tiered"）
+
+# 4. 重启 DSH（先杀掉 LISTEN 在 web 端口的进程），然后【新开一个会话】
+#    （已存在的会话保留创建时的 preset），用 /tier status 验证。
 ```
 
-卸载：
+卸载：从 preset 里删掉 `tier-routing` 行（或直接删除该 preset 目录），并执行
+`dsh plugin --profile web remove dsh-tier-router` 移除包链接。
 
-```sh
-dsh plugin --profile web remove dsh-tier-router
-```
-
-安装已实测：`dsh plugin --profile <name> add <path>` 成功链接 bundle，
-`dsh --profile <name> --dump-config` 确认插件行 `- id: tier-routing / name: dsh-tier-router`
-正确插入组合；模块加载冒烟通过；`npm pack` 内容干净（17KB：lib + patch + README/LICENSE）。
+安装已实测：包能从 profile store 正确解析；仓库自带的 `agent-presets/tiered`
+preset（standard 副本 + `- id: tier-routing / name: dsh-tier-router` 行）通过
+`agentPresets.standingKeyFor` 挂载校验；模块加载冒烟通过；`npm pack` 内容干净
+（lib + patch + preset + README/LICENSE）。
 
 ## 使用
 
@@ -200,7 +213,11 @@ settings.yaml 中声明 `baseURL`/`api`/`models`，否则任何模型 id 都会�
 拦截本身就是为了避免弱档模型直接执行破坏性操作。
 
 **Q: 装完 bundle 后 `/tier` 不出现？**
-bundle 需要重启 `dsh web` 才激活；动态插件形态则是进程内临时实例，重启即消失。
+本插件是 agent 层插件：必须是你所用会话的 agent preset 里的一行（见"安装"）。
+只作为 host bundle 行安装不会激活任何东西——agent 层服务（tools/commands/
+systemPrompt）在 host 根作用域不可达，因此本包**故意不带 host 插入行**。加入
+preset 行后重启 `dsh web` 并新开会话，用 `/tier status` 验证。（动态插件形态是
+进程内临时实例，重启即消失。）
 
 ## 已知限制
 

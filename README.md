@@ -111,24 +111,31 @@ git clone https://github.com/BruceLanLan/dsh-tier-router.git
 cd dsh-tier-router
 dsh plugin --profile web add .
 
-# 2. Point the profile's default agent preset at one that includes the row.
-#    Either select "tiered" in the session preset picker, or make it the
-#    default: add the following to the profile's cordis.patch.yml —
+# 2. Install the ready-made agent preset (standard + the tier-routing row) into
+#    the user preset root (${DSH_HOME:-$HOME/.dsh}/.agent-presets/):
+cp -R agent-presets/tiered "${DSH_HOME:-$HOME/.dsh}/.agent-presets/"
+
+# 3. Make it the default for new sessions (add to the profile's cordis.patch.yml):
 #      - id: agent-presets
 #        name: '@deepseek-ai/dsh-agent-presets'
 #        config:
 #          default: tiered
+#    (or select "tiered" per session in the preset picker instead)
 
-# 3. Restart DSH (kill the process LISTENing on the web port first) so the new
-#    preset mounts; verify with /tier status.
+# 4. Restart DSH (kill the process LISTENing on the web port first), then open a
+#    NEW session (existing sessions keep the preset they were created with) and
+#    verify with /tier status.
 ```
 
-Uninstall: remove the `tier-routing` row from the preset (and `dsh plugin --profile web remove dsh-tier-router` to drop the link).
+Uninstall: remove the `tier-routing` row from the preset (or delete the preset
+directory), and `dsh plugin --profile web remove dsh-tier-router` to drop the
+package link.
 
 Installation is verified in practice: the package resolves from the profile
-store, a `tiered` preset copied from `standard` with the `- id: tier-routing /
-name: dsh-tier-router` row mounts cleanly, module loading is smoke-tested, and
-`npm pack` ships a clean tarball (lib + patch + README/LICENSE).
+store, the shipped `agent-presets/tiered` preset (a `standard` copy plus the
+`- id: tier-routing / name: dsh-tier-router` row) passes
+`agentPresets.standingKeyFor` mount validation, module loading is smoke-tested,
+and `npm pack` ships a clean tarball (lib + patch + preset + README/LICENSE).
 
 ## Usage
 
