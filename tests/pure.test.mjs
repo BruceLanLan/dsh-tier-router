@@ -113,6 +113,13 @@ test('explicit tier wins over everything', () => {
   assert.equal(resolveTierSpec({ explicitTier: 'cheap', escalated: true, mode: 'strong' }), 'cheap')
 })
 
+test('per-session mode overrides the global default', () => {
+  assert.equal(resolveTierSpec({ sessionMode: 'strong', mode: 'cheap' }), 'strong')
+  assert.equal(resolveTierSpec({ sessionMode: 'cheap', mode: 'strong' }), 'cheap')
+  assert.equal(resolveTierSpec({ sessionMode: 'off', mode: 'auto', planActive: true }), null)
+  assert.equal(resolveTierSpec({ sessionMode: 'off', escalated: true }), null)
+})
+
 test('escalation forces strong before policy/mode', () => {
   assert.equal(resolveTierSpec({ escalated: true, isChild: true, subagentPolicy: 'cheap', mode: 'auto', planActive: false }), 'strong')
   assert.equal(resolveTierSpec({ escalated: true, mode: 'cheap' }), 'strong')

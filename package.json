@@ -1,6 +1,6 @@
 {
   "name": "dsh-tier-router",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "Tiered model routing for DeepSeek Harness: a strong tier for planning/architecture/review, a cheap tier for implementation, with plan-mode-aware auto routing, advisor/review consultations, a high-impact escalation guard, failure auto-escalation, and subagent tiering.",
   "keywords": [
