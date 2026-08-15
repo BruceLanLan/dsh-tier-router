@@ -1,0 +1,6 @@
+# The dsh-tier-router bundle patch: inserts the tiered model routing plugin
+# row over the profile root. Per-tier provider/model/effort is configured at
+# runtime via the /tier set command or the tier_configure tool.
+- insert:
+    - id: tier-routing
+      name: dsh-tier-router
