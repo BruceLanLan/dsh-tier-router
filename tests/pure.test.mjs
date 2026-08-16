@@ -43,6 +43,30 @@ test('denies rm variants via isHighImpact', () => {
   assert.ok(isHighImpact('bash', { command: 'echo hi; rm -rf ~/.cache' }))
 })
 
+test('denies rm bypass spellings (escape, runner args, extra runners)', () => {
+  assert.ok(hasRecursiveForceRm('\\rm -rf /x'), 'backslash escape still runs rm')
+  assert.ok(hasRecursiveForceRm('env -i rm -rf /x'), 'env with runner args')
+  assert.ok(hasRecursiveForceRm('env A=1 B=2 rm -rf /x'), 'env with assignments')
+  assert.ok(hasRecursiveForceRm('timeout 5 rm -rf /x'), 'timeout with delay')
+  assert.ok(hasRecursiveForceRm('nice -n 5 rm -rf /x'), 'nice with priority')
+  assert.ok(hasRecursiveForceRm('xargs -0 rm -rf /x'), 'xargs with option')
+  assert.ok(hasRecursiveForceRm('nohup rm -rf /x'), 'nohup direct')
+  assert.ok(hasRecursiveForceRm('doas rm -rf /x'), 'doas')
+  assert.ok(hasRecursiveForceRm('pkexec rm -rf /x'), 'pkexec')
+  assert.ok(hasRecursiveForceRm('stdbuf -oL rm -rf /x'), 'stdbuf with option')
+  assert.ok(hasRecursiveForceRm('setarch x86_64 rm -rf /x'), 'setarch with arch')
+  assert.ok(hasRecursiveForceRm('busybox rm -rf /x'), 'busybox')
+  assert.ok(hasRecursiveForceRm('command rm -rf /x'), 'command')
+  assert.ok(hasRecursiveForceRm('sudo -u root rm -rf /x'), 'sudo with user')
+})
+
+test('does not false-positive on runner + harmless command mentioning rm', () => {
+  assert.equal(hasRecursiveForceRm('nohup echo rm -rf is text'), false, 'direct runner takes the command immediately')
+  assert.equal(hasRecursiveForceRm('command echo rm -rf is text'), false)
+  assert.equal(hasRecursiveForceRm('busybox echo rm -rf'), false)
+  assert.equal(hasRecursiveForceRm('echo rm -rf is just prose'), false)
+})
+
 test('allows plain rm without force', () => {
   assert.equal(isHighImpact('bash', { command: 'rm -r /tmp/x' }), null)
   assert.equal(isHighImpact('bash', { command: 'rm file.txt' }), null)
@@ -69,6 +93,9 @@ test('denies equivalent destructive patterns', () => {
   assert.ok(isHighImpact('bash', { command: 'git clean -fdx' }))
   assert.ok(isHighImpact('bash', { command: 'python3 -c "import shutil; shutil.rmtree(\'/x\')"' }))
   assert.ok(isHighImpact('bash', { command: 'python -c "import os; os.remove(\'/x\')"' }))
+  assert.ok(isHighImpact('bash', { command: 'dd of=/dev/sdb bs=1M' }), 'dd writing to a device')
+  assert.ok(isHighImpact('bash', { command: 'diskutil eraseDisk JHFS+ X disk2' }), 'macOS disk erase')
+  assert.ok(isHighImpact('bash', { command: 'sudo diskutil unmountDisk /dev/disk1' }), 'macOS disk unmount')
 })
 
 test('allows benign equivalents and prose', () => {
@@ -103,6 +130,11 @@ test('denies credential/secret/ssh paths on write and edit', () => {
   assert.ok(isHighImpact('write', { file_path: '/home/u/.ssh/config' }))
   assert.ok(isHighImpact('edit', { file_path: '/etc/ssl/priv.pem' }))
   assert.ok(isHighImpact('write', { file_path: '/keys/deploy.key' }))
+  assert.ok(isHighImpact('write', { file_path: '/home/u/.netrc' }), '.netrc credential file')
+  assert.ok(isHighImpact('write', { file_path: '/etc/ssl/client.p12' }), 'pkcs12 keystore')
+  assert.ok(isHighImpact('edit', { file_path: '/keys/mobile.pfx' }), 'pfx keystore')
+  assert.ok(isHighImpact('write', { file_path: '/trust/cacerts.jks' }), 'java keystore')
+  assert.ok(isHighImpact('write', { file_path: '/home/u/.ssh/id_dsa' }), 'legacy dsa key')
 })
 
 test('allows ordinary and template file paths', () => {
