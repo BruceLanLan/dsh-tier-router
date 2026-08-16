@@ -116,6 +116,23 @@ preset（standard 副本 + `- id: tier-routing / name: dsh-tier-router` 行）�
 `agentPresets.standingKeyFor` 挂载校验；模块加载冒烟通过；`npm pack` 内容干净
 （lib + patch + preset + README/LICENSE）。
 
+### 安装后验收清单
+
+1. **重启 DSH**：先杀掉 LISTEN 在 web 端口的进程（`lsof -tiTCP:<端口> -sTCP:LISTEN | xargs kill -9`），再启动。
+2. **新开一个会话**——已存在的会话保留创建时的 preset（设计如此）。
+3. 运行 `/tier status`，必须看到：
+   - `config persisted: yes (tier-router settings namespace)`
+   - 两个 tier 各自的 provider/model/effort
+   - `diag:` 行为非空的实时计数器
+4. 该会话里必须能调用 `tier_status` / `tier_route` / `tier_configure` /
+   `tier_advisor` / `tier_review` / `tier_worker` 六个工具。
+5. 廉价档执行期间，高危命令（如 `rm -rf`、`sudo …`）必须被守卫拒绝并给出升级提示。
+6. `/tier set strong <provider> <model> [effort]` 必须回复 `Saved to
+   tier-router settings.` 且重启后仍然生效。
+
+如果 `/tier status` 不可用：说明该会话的 preset 里缺 `tier-routing` 行（见"安装"），
+或该会话创建于切换默认 preset 之前。
+
 ## 使用
 
 ### 斜杠命令（在输入框直接输入，只作用于当前会话）

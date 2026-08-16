@@ -137,6 +137,26 @@ store, the shipped `agent-presets/tiered` preset (a `standard` copy plus the
 `agentPresets.standingKeyFor` mount validation, module loading is smoke-tested,
 and `npm pack` ships a clean tarball (lib + patch + preset + README/LICENSE).
 
+### Post-install acceptance checklist
+
+1. **Restart** DSH: kill the process LISTENing on the web port first
+   (`lsof -tiTCP:<port> -sTCP:LISTEN | xargs kill -9`), then start it again.
+2. **Open a NEW session** — existing sessions keep the preset they were created
+   with (this is by design).
+3. Run `/tier status` — it must report:
+   - `config persisted: yes (tier-router settings namespace)`,
+   - both tiers with their provider/model/effort,
+   - a non-empty `diag:` line with live counters.
+4. The `tier_status`, `tier_route`, `tier_configure`, `tier_advisor`,
+   `tier_review`, and `tier_worker` tools must be callable in that session.
+5. While executing on the cheap tier, a high-impact command (e.g. `rm -rf`,
+   `sudo …`) must be denied by the guard with an escalation hint.
+6. `/tier set strong <provider> <model> [effort]` must reply `Saved to
+   tier-router settings.` and survive a restart.
+
+If `/tier status` is unavailable, the row is missing from the session's preset
+(see Installation) or the session predates the preset switch.
+
 ## Usage
 
 ### Slash commands (typed in the composer; they affect only the current session)
