@@ -92,7 +92,10 @@ sequenceDiagram
   on a chosen tier (`agentOptions` model injection), with `outputSchema` (structured
   results), `toolFilter` (restrict worker tools), `maxDepth` (delegation-depth cap),
   `persona` (per-child persona) and `background` (run via the jobs service);
-  `/tier subagent <inherit|cheap|strong>` sets the global policy for all other subagent steps.
+  `/tier subagent <inherit|cheap|strong>` records the policy used to classify subagent
+  execution (the guard); a child's model route is fixed at creation — `tier_worker` passes
+  provider/model/effort directly, built-in `subagent`/`subagent_fork` children inherit the
+  parent's route.
 - **Escalation rules injected into the system prompt**: ambiguity unresolved,
   architecture / security / data integrity, two failed attempts, high-risk completion —
   the model is guided to call `tier_advisor` / `tier_review` at decision points.
@@ -170,7 +173,7 @@ If `/tier status` is unavailable, the row is missing from the session's preset
 /tier plan                                  # auto + enter plan mode, apply the strong header immediately
 /tier models                                # list registered providers and their models
 /tier set <strong|cheap> <provider> <model> [effort]
-/tier subagent <inherit|cheap|strong>       # global policy for subagent steps
+/tier subagent <inherit|cheap|strong>       # policy used to classify subagent execution (guard)
 /tier review <focus>                        # strong-tier review
 ```
 
@@ -270,8 +273,9 @@ restart.)
 ## Known limitations
 
 - Tier switches take effect from the next step (the header is written before the step builds).
-- The subagent global policy (`/tier subagent`) is process-wide; a worker's per-dispatch
-  tier always wins.
+- The subagent policy (`/tier subagent`) is process-wide and classifies child execution
+  for the guard. A worker's tier is fixed at creation (`tier_worker` agentOptions); built-in
+  `subagent`/`subagent_fork` children inherit the parent's model route.
 - The full live "fail -> self-heal" sequence for failure auto-escalation has been verified
   at the event path and unit-logic level; trigger it live per the FAQ if desired.
 

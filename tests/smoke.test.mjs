@@ -108,9 +108,10 @@ test('apply() registers every surface and loads without throwing', () => {
   assert.ok(services.systemPrompt.sections[0].text().includes('Tiered model routing'))
   assert.ok(services.jobs.controllers.includes('tier-worker'), 'jobs controller attached')
   assert.ok(services.settings.scope, 'settings scope created')
-  for (const event of ['agent/request', 'agent/inbox/inserted', 'session/event', 'agent/error', 'tools/pre-execute']) {
+  for (const event of ['agent/inbox/inserted', 'session/event', 'agent/error', 'tools/pre-execute']) {
     assert.ok(ctx.listeners[event] && ctx.listeners[event].length >= 1, 'listener registered for ' + event)
   }
+  assert.equal(ctx.listeners['agent/request'], undefined, 'does not wrap DSH model-selection waterfall')
 })
 
 test('tier_route applies per-session mode and writes the session header', async () => {
@@ -178,7 +179,11 @@ test('foreground tier_worker settles with the worker result', async () => {
   assert.equal(out.model, 'deepseek-v4-flash')
   assert.equal(services.subagents.started.length, 1)
   assert.equal(services.subagents.started[0].name, 'spawn')
-  assert.deepEqual(services.subagents.started[0].request.agentOptions, { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  assert.deepEqual(services.subagents.started[0].request.agentOptions, {
+    provider: 'deepseek-official',
+    model: 'deepseek-v4-flash',
+    reasoningEffort: 'high',
+  })
 })
 
 test('background tier_worker resolves a proper JobOutcome (v0.4.1 fix)', async () => {
