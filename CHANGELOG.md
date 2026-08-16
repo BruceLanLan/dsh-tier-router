@@ -2,6 +2,24 @@
 
 All notable changes to dsh-tier-router are documented here.
 
+## [0.4.7] - 2026-08-16
+
+### Fixed
+- Removed the `agent/request` waterfall listener: on DSH rc.6 an extra
+  standing-scope waterfall listener makes model requests fail before reaching
+  the adapter (the model-selection listener destructures the downstream result
+  without guarding an undefined value). This could break every model step in a
+  session composed with the plugin.
+- `tier_worker` now supplies the complete route (`agentOptions` with provider,
+  model, and reasoningEffort) at child creation instead of rewriting the
+  waterfall — requests stay stable and the worker still runs on its chosen tier.
+
+### Changed
+- Built-in `subagent`/`subagent_fork` children inherit the parent's model route;
+  `/tier subagent` now records the policy used to classify subagent execution
+  for the high-impact guard rather than rewriting child model steps.
+- Bilingual README updated to describe the current routing model accurately.
+
 ## [0.4.3] - 2026-08-16
 
 ### Fixed
