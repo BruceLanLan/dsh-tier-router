@@ -13,6 +13,7 @@ function makeAgent(id, origin) {
   const session = {
     id: 'session-' + id,
     header: { origin: origin || '' },
+    events: [],
     append(kind, payload) { writes.push({ kind, payload }) },
     requestHeader() {
       const last = writes.filter((w) => w.kind === 'request/header').at(-1)
@@ -242,4 +243,34 @@ test('guard denies high-impact commands on the cheap tier', async () => {
   const allowed = await guard({ agent: main, name: 'bash', arguments: { command: 'ls -la' } }, async () => 'ok')
   assert.equal(allowed, 'ok')
   assert.ok(denied)
+})
+
+test('auto routing folds plan state from the session log when planMode is unreachable', async () => {
+  // Agent-plane install: the planMode service lives in an isolate realm the
+  // bundle cannot reach; plan state must come from the session log fold.
+  const { ctx, services } = makeContext()
+  services.planMode = undefined
+  apply(ctx)
+  const main = makeAgent('main')
+  services.agents.get = (id) => (id === main.session.id ? main : null)
+  main.session.events.push({ type: 'plan/mode', data: { active: true } })
+  for (const fn of ctx.listeners['agent/inbox/inserted']) {
+    fn({ agent: main, message: { source: { kind: 'user' }, content: [] } })
+  }
+  const headers = main.writes.filter((w) => w.kind === 'request/header')
+  assert.equal(headers.length, 1)
+  assert.equal(headers[0].payload.header.config.model, 'deepseek-v4-pro', 'plan-active session routes strong without the planMode service')
+})
+
+test('/tier plan appends plan/mode to the session log when planMode is unreachable', async () => {
+  const { ctx, services } = makeContext()
+  services.planMode = undefined
+  apply(ctx)
+  const main = makeAgent('main')
+  const cmd = services.commands.registered.find((c) => c.name === 'tier')
+  const out = await cmd.handler({ agent: main, rawInput: 'plan', signal: undefined })
+  assert.ok(out.text.includes('Plan mode: committed'), out.text)
+  const appended = main.writes.filter((w) => w.kind === 'plan/mode')
+  assert.equal(appended.length, 1)
+  assert.deepEqual(appended[0].payload, { active: true })
 })
