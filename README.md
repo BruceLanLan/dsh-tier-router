@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-ready-4B32C3)](https://github.com/topics/dsh-plugin)
 
-handles planning / architecture / review**, while a **cheap tier (cctq/gpt-5.6-terra by
+handles planning / architecture / review**, while a **cheap tier (deepseek-v4-flash by
 default) handles day-to-day implementation**, with per-tier fallback chains and
 task-intensity reasoning effort. Inspired by Claude Code's `/advisor`
 (consult a stronger model for hard decisions) and `opusplan` (strong model in plan mode,
@@ -51,12 +51,14 @@ sequenceDiagram
 ## Features
 
 - **Automatic tiered routing (auto mode, opusplan-style)**: steps run on the strong tier
-  while plan mode is active and on the cheap tier during execution. Main sessions are
-  routed by writing the session `request/header` (the official seam the api-proxy selection
-  layer reads, as community plugins like `dsh-model-router` do); subagents are switched
-  per step at the `agent/request` waterfall.
-- **Per-session scoping**: `/tier strong|cheap|auto|off` affects **only the current
+  while plan mode is active and on the cheap tier during execution. Before a loop
+  builds its first or resumed request, the router synchronizes the agent's model
+  options and durable `request/header`; later route changes preserve unrelated
+  request settings such as `maxTokens`.
+- **Per-session scoping**: `/tier strong|cheap|auto|delegated|off` affects **only the current
   session**; other sessions in the process keep their own tier (global default `auto`).
+  In `delegated` mode the main session stays on its model-picker selection while only
+  subagents use tier routing; `/tier auto` remains an explicit per-session override.
   Sessions that should not be managed can opt out with a single `/tier off`.
 - **On-demand advice (advisor-style)**: the `/advisor <question>` command and the
   `tier_advisor` tool hand one decision question plus gathered evidence to the strong
@@ -69,21 +71,25 @@ sequenceDiagram
   60s) temporarily escalate the session to the strong tier (default 180s), expiring via
   TTL; sessions in `off` mode never escalate.
 - **Configurable tiers (durable)**: `/tier set <strong|cheap> <provider> <model> [effort]` or the
-  `tier_configure` tool can point either tier at any registered provider/model (defaults:
-  `deepseek-official/deepseek-v4-pro(max)` and `deepseek-official/deepseek-v4-flash(high)`).
+  `tier_configure` tool can point either tier at any registered provider/model, configure
+  the strong tier to follow the session selection, and set ordered fallback chains.
   Configuration persists in the `tier-router` settings namespace and survives restarts
-
-- **Per-tier fallback chains**: each tier keeps an ordered fallback chain. If the primary
+  (pass `sessionOnly: true` for a transient change).
+- **WebUI settings**: the Tier routing settings page configures providers, models,
+  reasoning effort, follow-session behavior, fallback chains, routing mode, and the
+  subagent policy. It uses the live model catalog when available and preserves custom
+  routes when it is not.
+- **Per-tier fallback chains**: if the primary
   model is unavailable (unknown model, quota, rate limit, missing/invalid credential,
-  server/transport error, or any status >= 500 failure), the next chain entry runs the
-  same task and the tier returns to its primary after the fallback TTL (default 5 min,
-  `state.fallbackTtlMs`). The chain is tracked per agent (subagent children included)
-  and independently of failure auto-escalation; an exhausted chain clears and lets the
-  original error surface.
+  server/transport error, or any status >= 500 failure), the router changes route at the
+  supported request-error boundary and retries the same step on the next entry. Remove
+  every entry to disable fallback. Fallback state is per agent and tier, returns to the
+  primary after the fallback TTL (default 5 min, `state.fallbackTtlMs`), and never
+  crosses from a cheap chain to a strong chain during a plan transition.
 - **Task-intensity reasoning effort**: the strong tier follows your session model
   selection by default (`/tier set strong follow-session`); the cheap tier starts at
   `medium` and raises itself to `high`/`max` (bounded by the model's declared efforts,
-  e.g. cctq declares low/medium/high) on cheap-tier retry errors, high-impact guard
+  e.g. deepseek models declare off/high/max) on cheap-tier retry errors, high-impact guard
   denials, or the `tier_escalate_effort` tool; `/tier effort <medium|high|max>` sets it
   manually. `tier_configure` and `/tier set` validate every effort against
   `llm.resolveModelInfo` when metadata is available.
@@ -107,48 +113,37 @@ sequenceDiagram
 - **Subagent tiering**: `tier_worker` dispatches bounded task packets to a fresh subagent
   on a chosen tier (`agentOptions` model injection), with `outputSchema` (structured
   results), `toolFilter` (restrict worker tools), `maxDepth` (delegation-depth cap),
-  `persona` (per-child persona) and `background` (run via the jobs service);
-  `/tier subagent <inherit|cheap|strong>` records the policy used to classify subagent
-  execution (the guard); a child's model route is fixed at creation — `tier_worker` passes
-  provider/model/effort directly, built-in `subagent`/`subagent_fork` children inherit the
-  parent's route.
+  `persona` (per-child persona) and `background` (run via the jobs service).
+  `/tier subagent <inherit|cheap|strong>` also routes ordinary `subagent` and
+  `subagent_fork` children before their first request; an automatic escalation remains
+  temporary and never permanently overrides an explicitly selected worker tier.
 - **Escalation rules injected into the system prompt**: ambiguity unresolved,
   architecture / security / data integrity, two failed attempts, high-risk completion —
   the model is guided to call `tier_advisor` / `tier_review` at decision points.
 
 ## Installation
 
-> **Plane note.** `dsh-tier-router` contributes agent-plane surfaces — tools,
-> slash commands, a prompt section, and step-routing listeners — so it must be
-> composed in the **agent preset** your sessions use, not as a host bundle row.
-> Installing the package alone (or shipping a host insert) activates nothing.
+> **Plane note.** `dsh-tier-router` routing remains **agent-plane**: tools,
+> slash commands, prompt sections, and routing listeners mount only when a
+> session uses `tiered`. Its profile bundle now has one host-only responsibility:
+> synchronize the packaged `tiered` preset into DSH's discovery root on startup.
 
 ```sh
-# 1. Link the package into your profile (dev: clone this repo and add the path;
-#    once published: dsh plugin --profile web add dsh-tier-router)
-git clone https://github.com/BruceLanLan/dsh-tier-router.git
-cd dsh-tier-router
+# 1. Install into the profile. The host bundle synchronizes the packaged
+#    tiered preset into ~/.dsh/.agent-presets on the next DSH startup.
+dsh plugin --profile web add dsh-tier-router
+
+# Local development uses the same installation path:
 dsh plugin --profile web add .
 
-# 2. Install the ready-made agent preset (standard + the tier-routing row) into
-#    the user preset root (${DSH_HOME:-$HOME/.dsh}/.agent-presets/):
-cp -R agent-presets/tiered "${DSH_HOME:-$HOME/.dsh}/.agent-presets/"
-
-# 3. Make it the default for new sessions (add to the profile's cordis.patch.yml):
-#      - id: agent-presets
-#        name: '@deepseek-ai/dsh-agent-presets'
-#        config:
-#          default: tiered
-#    (or select "tiered" per session in the preset picker instead)
-
-# 4. Restart DSH (kill the process LISTENing on the web port first), then open a
-#    NEW session (existing sessions keep the preset they were created with) and
-#    verify with /tier status.
+# 2. Restart DSH, then choose "tiered" in the preset picker
+#    for a new session (or make it the profile default through agent-presets).
+#    No manual preset copy is required.
 ```
 
-Uninstall: remove the `tier-routing` row from the preset (or delete the preset
-directory), and `dsh plugin --profile web remove dsh-tier-router` to drop the
-package link.
+Uninstall: run `dsh plugin --profile web remove dsh-tier-router`; the next DSH
+startup no longer updates the `tiered` preset. Delete
+`~/.dsh/.agent-presets/tiered` separately only when it is no longer wanted.
 
 Installation is verified in practice: the package resolves from the profile
 store, the shipped `agent-presets/tiered` preset (a `standard` copy plus the
@@ -185,6 +180,7 @@ If `/tier status` is unavailable, the row is missing from the session's preset
 /tier status                                # routing state, escalation state, diagnostics
 /tier strong | cheap                        # force one tier for this session (optionally persist as session default)
 /tier auto                                  # restore auto for this session (plan -> strong, execution -> cheap)
+/tier delegated                             # keep the main session on the model picker; tier only subagents
 /tier off                                   # disable routing for this session, restore its default model (other sessions unaffected)
 /tier plan                                  # auto + enter plan mode, apply the strong header immediately
 /tier models                                # list registered providers and their models
@@ -197,9 +193,9 @@ Sample output (`/tier status`):
 
 ```
 Tiered model routing
-  mode: global=auto, this session=auto (per-session via /tier strong|cheap|auto|off; escalate: 2 errors / 60s window -> 180s strong)
+  mode: global=auto, this session=auto (per-session via /tier strong|cheap|auto|delegated|off; escalate: 2 errors / 60s window -> 180s strong)
   strong: deepseek-official/deepseek-v4-pro (max)
-  cheap:  deepseek-official/deepseek-v4-flash (high)
+  cheap:  deepseek-official/deepseek-v4-flash (medium)
   subagents: inherit
   diag: requestSteps=42 guardChecks=31 guardDenies=3 headerWrites=4 errorsSeen=0 escalations=0
   session default: deepseek-official/deepseek-v4-pro (max)
@@ -212,7 +208,7 @@ Tiered model routing
 | --- | --- |
 | `tier_advisor` | Strong-tier consultation: one question + evidence -> advice / risks / acceptance criteria |
 | `tier_review` | Strong-tier review: change set + validation results -> verdict with ranked issues |
-| `tier_route` | Set **this session's** tier (strong/cheap/auto/off, optionally persisted) |
+| `tier_route` | Set **this session's** tier (strong/cheap/auto/delegated/off, optionally persisted) |
 | `tier_configure` | Reconfigure either tier's provider/model/effort and the subagent policy |
 | `tier_worker` | Dispatch a bounded task packet to a subagent on a chosen tier; supports outputSchema / toolFilter / maxDepth / persona |
 | `tier_status` | Read-only diagnostics: global & session tiers, escalation state, listener counters, effective tier |
@@ -223,12 +219,12 @@ Runtime configuration (no restart needed):
 
 ```sh
 /tier set strong deepseek-official deepseek-v4-pro max
-/tier set cheap deepseek-official deepseek-v4-flash high
+/tier set cheap deepseek-official deepseek-v4-flash medium
 ```
 
 `/tier set` and `tier_configure` persist the tier configuration in the `tier-router`
 settings namespace (survives restarts; pass `sessionOnly: true` for a transient change).
-`tier_route strong|cheap` scopes to the current session and does NOT persist by default;
+`tier_route strong|cheap|delegated` scopes to the current session and does NOT persist by default;
 pass `persist: true` to also write the session default model (`agent-default-model`).
 Failure auto-escalation parameters (threshold / window / TTL) are currently built-in
 constants; configurable in a later version.

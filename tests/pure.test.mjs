@@ -318,10 +318,10 @@ test('migrateTierConfig fills tier defaults when no config exists', () => {
   assert.equal(strong.label, 'strong')
   const cheap = migrateTierConfig('cheap', null)
   assert.equal(cheap.followSession, false)
-  assert.equal(cheap.provider, 'cctq')
-  assert.equal(cheap.model, 'gpt-5.6-terra')
+  assert.equal(cheap.provider, 'deepseek-official')
+  assert.equal(cheap.model, 'deepseek-v4-flash')
   assert.equal(cheap.reasoningEffort, 'medium')
-  assert.deepEqual(cheap.fallback, [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' }])
+  assert.deepEqual(cheap.fallback, [])
 })
 
 test('migrateTierConfig migrates legacy configs without error', () => {
@@ -331,6 +331,11 @@ test('migrateTierConfig migrates legacy configs without error', () => {
   const legacyStrong = migrateTierConfig('strong', { provider: 'opencode-go', model: 'v4-pro', reasoningEffort: 'high' })
   assert.equal(legacyStrong.followSession, true, 'strong default followSession')
   assert.deepEqual(legacyStrong.fallback, [{ provider: 'opencode-go', model: 'v4-pro', reasoningEffort: 'high' }])
+})
+
+test('migrateTierConfig keeps an explicit empty fallback chain disabled', () => {
+  const cfg = migrateTierConfig('cheap', { provider: 'cctq', model: 'gpt-5.6-terra', reasoningEffort: 'medium', fallback: [] })
+  assert.deepEqual(cfg.fallback, [])
 })
 
 test('migrateTierConfig keeps explicit followSession and fallback chains', () => {
@@ -359,5 +364,6 @@ test('DEFAULT_TIER_CONFIG and EFFORT_LADDER match the v0.5.0 contract', () => {
   assert.deepEqual(EFFORT_LADDER, ['medium', 'high', 'max'])
   assert.equal(DEFAULT_TIER_CONFIG.strong.followSession, true)
   assert.equal(DEFAULT_TIER_CONFIG.cheap.followSession, false)
-  assert.equal(DEFAULT_TIER_CONFIG.cheap.provider, 'cctq')
+  assert.equal(DEFAULT_TIER_CONFIG.cheap.provider, 'deepseek-official')
+  assert.equal(DEFAULT_TIER_CONFIG.cheap.model, 'deepseek-v4-flash')
 })

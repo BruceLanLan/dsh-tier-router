@@ -1,2 +1,2 @@
-name: tiered (layered routing)
-description: "The standard coding agent plus dsh-tier-router (v0.5.0): a strong tier for planning/architecture/review and a cheap tier for routine implementation, each with its own model fallback chain; reasoning effort follows the session model on strong and escalates by task intensity (medium -> high -> max) on cheap; /advisor + tier_review consultations, deterministic high-impact guard, failure auto-escalation, subagent tiering, and a WebUI settings card for hot configuration. · 标准编码 agent + tier-routing 插件：strong 档负责规划/架构/评审、cheap 档负责日常实现，每档带模型回退链；思考强度 strong 跟随会话选择、cheap 按任务强度自动升级；提供 /advisor、tier_review、高危操作守卫、失败自动升级、子代理分层，并支持 WebUI 设置卡片热改配置。"
+name: tiered
+description: "标准编码 agent + dsh-tier-router：按任务难度分层路由强档与弱档；主会话可跟随计划状态切换，也可固定使用模型选择器，仅对子代理分层。支持每档回退链、临时失败升级、普通与有界子代理分层，以及在 Web 设置页配置模型提供方、思考强度、回退链、路由模式和子代理策略。"

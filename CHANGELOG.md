@@ -60,14 +60,33 @@ All notable changes to dsh-tier-router are documented here.
   entry renders `/tier` output fully expanded (the generic command card
   collapses multi-line output to a one-line summary), with success/running/
   failure states.
+- **Automatic tiered preset discovery**: the profile bundle now mounts a
+  host-only synchronizer. After `dsh plugin --profile web add dsh-tier-router`,
+  DSH startup validates and synchronizes the packaged `tiered` preset into the
+  user discovery root (`~/.dsh/.agent-presets` or `DSH_HOME/.agent-presets`).
+  The host row never mounts routing tools; selecting `tiered` still mounts the
+  agent-plane `tier-routing` row.
 - **Preset description**: the tiered preset now describes fallback chains,
   task-intensity effort and the WebUI card (bilingual).
 
 ### Fixed
-- Failure auto-escalation could never reach its threshold: `escalationActive`
-  deleted in-progress counting records (`until === 0`) on routing lookups
-  between two errors. Counting records now survive until the escalation
-  actually expires.
+- **Initial and resumed routing**: synchronize the selected route into mutable
+  AgentOptions before the loop builds a request, so the first request no longer
+  discards a header written at inbox insertion.
+- **Ordinary subagent routing**: `subagent` and `subagent_fork` now apply the
+  configured child policy before their first request rather than only reporting
+  that policy in diagnostics and the guard.
+- **Fallback recovery**: availability failures now change route at
+  `agent/request-error` and retry the same step. Fallback records carry their
+  tier identity, so plan transitions cannot select a fallback from another tier;
+  an explicit empty fallback array now disables fallback.
+- **Escalation and headers**: child escalation obeys its TTL without overwriting
+  a worker's explicit tier; route writes preserve unrelated request-header
+  fields; delegated/off restore the session's captured route rather than the
+  mutable global default.
+- **WebUI integration**: the `/tier` command renderer now registers its required
+  slot key, catalog failure permits free-form custom routes, and partial catalog
+  failures are visible.
 - `/tier status` printed a duplicate cheap-tier line (leftover from the
   fallback/effort status rewrite).
 - Client bundle factory was missing `return module.exports`, breaking the

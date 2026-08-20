@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "test": "node --test \"tests/**/*.test.mjs\"",
-    "check": "node --check lib/index.js && node --check lib/pure.js"
+    "check": "node --check lib/index.js && node --check lib/pure.js && node --check lib/preset-sync.js"
   },
   "dsh": {
     "bundle": {
