@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { apply } from '../lib/index.js'
 
-function makeAgent(id, origin) {
+function makeAgent(id, origin, options = {}) {
   const writes = []
   const session = {
     id: 'session-' + id,
@@ -17,10 +17,10 @@ function makeAgent(id, origin) {
     append(kind, payload) { writes.push({ kind, payload }) },
     requestHeader() {
       const last = writes.filter((w) => w.kind === 'request/header').at(-1)
-      return last ? { config: last.payload.header.config } : null
+      return last ? last.payload.header : null
     },
   }
-  return { id, session, writes }
+  return { id, options: { provider: options.provider || 'deepseek-official', model: options.model || 'deepseek-v4-pro', reasoningEffort: options.reasoningEffort || 'max', ...options }, session, writes }
 }
 
 function makeContext(options = {}) {
@@ -117,7 +117,7 @@ test('apply() registers every surface and loads without throwing', () => {
   assert.ok(services.systemPrompt.sections[0].text().includes('Tiered model routing'))
   assert.ok(services.jobs.controllers.includes('tier-worker'), 'jobs controller attached')
   assert.ok(services.settings.scope, 'settings scope created')
-  for (const event of ['agent/inbox/inserted', 'session/event', 'agent/error', 'tools/pre-execute']) {
+  for (const event of ['agent/inbox/inserted', 'session/event', 'agent/error', 'agent/request-error', 'tools/pre-execute']) {
     assert.ok(ctx.listeners[event] && ctx.listeners[event].length >= 1, 'listener registered for ' + event)
   }
   assert.equal(ctx.listeners['agent/request'], undefined, 'does not wrap DSH model-selection waterfall')
@@ -130,6 +130,16 @@ test('legacy settings without a mode retain the auto default', async () => {
   const status = services.tools.registered.find((t) => t.name === 'tier_status')
   const out = await status.execute({}, { agent: main, signal: undefined })
   assert.ok(out.status.includes('mode: global=auto, this session=auto'), out.status)
+})
+
+test('inbox routing updates agent options before a first request is assembled', async () => {
+  const { ctx, services } = makeContext()
+  apply(ctx)
+  const main = makeAgent('main')
+  for (const fn of ctx.listeners['agent/inbox/inserted']) {
+    fn({ agent: main, message: { source: { kind: 'user' }, content: [] } })
+  }
+  assert.deepEqual(main.options, { provider: 'cctq', model: 'gpt-5.6-terra', reasoningEffort: 'max' })
 })
 
 test('tier_route applies per-session mode and writes the session header', async () => {
@@ -145,11 +155,11 @@ test('tier_route applies per-session mode and writes the session header', async 
   assert.deepEqual(headers[0].payload.header.config, { provider: 'cctq', model: 'gpt-5.6-terra', reasoningEffort: 'medium' })
 })
 
-test('delegated mode pins the main agent to the session selection while children stay tiered', async () => {
+test('delegated mode pins the main agent to its captured session model while children stay tiered', async () => {
   const { ctx, services } = makeContext()
   apply(ctx)
   services.agentDefaultModel.currentSelection = () => ({ provider: 'cctq', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
-  const main = makeAgent('main')
+  const main = makeAgent('main', undefined, { provider: 'cctq', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
   services.agents.get = (id) => (id === main.session.id ? main : null)
   const route = services.tools.registered.find((t) => t.name === 'tier_route')
   await route.execute({ tier: 'delegated' }, { agent: main, signal: undefined })
@@ -186,7 +196,7 @@ test('persisted delegated mode keeps unoverridden main listeners pinned and rout
   const { ctx, services } = makeContext({ mode: 'delegated' })
   apply(ctx)
   services.agentDefaultModel.currentSelection = () => ({ provider: 'cctq', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
-  const main = makeAgent('main')
+  const main = makeAgent('main', undefined, { provider: 'cctq', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
   services.agents.get = (id) => (id === main.session.id ? main : null)
 
   for (const fn of ctx.listeners['agent/inbox/inserted']) {
@@ -258,6 +268,16 @@ test('strong followSession semantics: session selection drives the strong header
   assert.deepEqual(headers[0].payload.header.config, { provider: 'cctq', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
 })
 
+test('ordinary child inbox routing applies subagent policy to initial options', async () => {
+  const { ctx, services } = makeContext()
+  apply(ctx)
+  const child = makeAgent('child', 'subagent')
+  for (const fn of ctx.listeners['agent/inbox/inserted']) {
+    fn({ agent: child, message: { source: { kind: 'user' }, content: [] } })
+  }
+  assert.equal(child.options.model, 'gpt-5.6-terra')
+})
+
 test('failure escalation now covers built-in-subagent children (v0.4.1 fix)', async () => {
   const { ctx, services } = makeContext()
   apply(ctx)
@@ -269,6 +289,7 @@ test('failure escalation now covers built-in-subagent children (v0.4.1 fix)', as
   const status = services.tools.registered.find((t) => t.name === 'tier_status')
   const out = await status.execute({}, { agent: child, signal: undefined })
   assert.ok(out.status.includes('effective tier for calling agent: strong'), 'escalated child resolves to strong')
+  assert.equal(child.options.model, 'deepseek-v4-pro', 'escalation updates the child retry route')
   assert.ok(out.status.includes('(ESCALATED to strong)'))
 })
 
@@ -279,14 +300,14 @@ test('fallback chain switches the header and is kept by inbox writes until TTL',
   const route = services.tools.registered.find((t) => t.name === 'tier_route')
   await route.execute({ tier: 'cheap' }, { agent: main, signal: undefined })
   main.writes.length = 0
-  for (const fn of ctx.listeners['agent/error']) {
-    await fn({ agent: main, error: { message: 'unknown model', code: 'UNKNOWN_MODEL' } })
+  for (const fn of ctx.listeners['agent/request-error']) {
+    await fn({ agent: main, failure: { message: 'unknown model', code: 'UNKNOWN_MODEL' } }, async () => undefined)
   }
   const headers = main.writes.filter((w) => w.kind === 'request/header')
   assert.equal(headers.length, 1)
   assert.deepEqual(headers[0].payload.header.config, { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' }, 'cheap falls back to its chain entry')
-  // Conservative recovery: no llm success event exists in the rc.7 agent loop,
-  // so the fallback header is kept on the next inbox write while the TTL is valid.
+  // The request-error listener retries the current step on the fallback route;
+  // later inboxes preserve that fallback until its TTL expires.
   main.writes.length = 0
   for (const fn of ctx.listeners['agent/inbox/inserted']) {
     fn({ agent: main, message: { source: { kind: 'user' }, content: [] } })
@@ -296,8 +317,8 @@ test('fallback chain switches the header and is kept by inbox writes until TTL',
   assert.equal(after[0].payload.header.config.model, 'deepseek-v4-flash', 'fallback header is kept until the TTL expires')
   const status = services.tools.registered.find((t) => t.name === 'tier_status')
   const out = await status.execute({}, { agent: main, signal: undefined })
-  assert.ok(out.status.includes('fallback state: index=0/1'), out.status)
-  assert.ok(out.status.includes('cheap effort: high'), 'cheap effort raised by the retry error: ' + out.status)
+  assert.ok(out.status.includes('fallback state: tier=cheap index=0/1'), out.status)
+  assert.ok(out.status.includes('cheap effort: medium'), 'successful fallback retry does not raise cheap effort: ' + out.status)
 })
 
 test('mode switches clear per-agent fallback state', async () => {

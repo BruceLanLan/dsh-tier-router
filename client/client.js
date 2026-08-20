@@ -89,7 +89,7 @@ const groupHeadStyle = {
 
 const zh = {
   nav: 'Tier 路由',
-  subtitle: 'strong/cheap 档、回退链与思考强度的 WebUI 设置',
+  subtitle: '首请求分层、同一步回退与子代理策略的 WebUI 设置',
   unregistered: '尚未激活：tier-router 命名空间由 tiered preset 会话注册。请先用 tiered preset 新建一个会话（新建会话 → 选择 tiered），保存即自动可用。',
   statusTitle: '当前生效配置',
   routingMode: '默认路由模式',
@@ -105,7 +105,7 @@ const zh = {
   model: 'Model',
   effort: 'Effort',
   fallback: '回退链',
-  fallbackHint: '主模型不可用时按顺序尝试；留空表示不回退。',
+  fallbackHint: '主模型不可用时按顺序尝试；移除全部条目即可关闭回退。',
   addFallback: '+ 添加回退',
   remove: '移除',
   subagentPolicy: '子代理策略',
@@ -118,7 +118,7 @@ const zh = {
   retry: '重试',
   refresh: '刷新',
   ttlNote: 'fallback/effort TTL 300s、升级阈值 2/60s/180s 为代码内常量，未开放 WebUI 修改',
-  editNote: 'effort 选项来自模型声明的档位（如 cctq 仅 low/medium/high）；未声明时保留当前值。',
+  editNote: 'effort 选项来自模型声明的档位（如 deepseek 系列声明 off/high/max）；未声明时保留当前值。',
   strong: 'strong 档',
   cheap: 'cheap 档',
   active: '（已激活）',
@@ -132,7 +132,7 @@ const zh = {
 
 const en = {
   nav: 'Tier routing',
-  subtitle: 'Strong/cheap tiers, fallback chains and reasoning effort — WebUI settings',
+  subtitle: 'First-request tiering, same-step fallback and subagent policy — WebUI settings',
   unregistered: 'Not active yet: the tier-router namespace is registered by the first session that runs the tiered preset (new session -> tiered). The card becomes editable once that happens.',
   statusTitle: 'Current configuration',
   routingMode: 'Default routing mode',
@@ -148,7 +148,7 @@ const en = {
   model: 'Model',
   effort: 'Effort',
   fallback: 'Fallback chain',
-  fallbackHint: 'Tried in order when the primary is unavailable; empty means no fallback.',
+  fallbackHint: 'Tried in order when the primary is unavailable; remove every row to disable fallback.',
   addFallback: '+ Add fallback',
   remove: 'Remove',
   subagentPolicy: 'Subagent policy',
@@ -161,7 +161,7 @@ const en = {
   retry: 'Retry',
   refresh: 'Refresh',
   ttlNote: 'Fallback/effort TTL 300s and escalation 2/60s/180s are code constants, not exposed in the WebUI yet',
-  editNote: 'Effort options come from each model\'s declared efforts (e.g. cctq declares low/medium/high only); undeclared values keep their current option.',
+  editNote: 'Effort options come from each model\'s declared efforts (e.g. deepseek models declare off/high/max); undeclared values keep their current option.',
   strong: 'strong tier',
   cheap: 'cheap tier',
   active: '(active)',
@@ -180,11 +180,11 @@ const DEFAULTS = {
   strongEffort: 'max',
   strongFollowSession: true,
   strongFallback: [{ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }],
-  cheapProvider: 'cctq',
-  cheapModel: 'gpt-5.6-terra',
+  cheapProvider: 'deepseek-official',
+  cheapModel: 'deepseek-v4-flash',
   cheapEffort: 'medium',
   cheapFollowSession: false,
-  cheapFallback: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' }],
+  cheapFallback: [],
   subagentPolicy: 'inherit',
 }
 
@@ -237,12 +237,12 @@ function selectOrText(t, label, value, options, onChange, disabled, optionLabel)
   const style = { ...fieldStyle, cursor: disabled ? 'default' : 'pointer' }
   const dim = disabled ? { opacity: 0.55 } : {}
   const known = options.some((o) => o.value === value)
-  const all = known ? options : [{ value: value, label: (optionLabel ? optionLabel(value) : value) + t('customSuffix') }, ...options]
-  if (all.length === 0) {
+  if (options.length === 0) {
     return h('label', { style: { display: 'block' } },
       h('span', { style: labelStyle }, label),
       h('input', { value: value, disabled: disabled, onChange: (e) => onChange(e.target.value), style: { ...fieldStyle, ...dim } }))
   }
+  const all = known ? options : [{ value: value, label: (optionLabel ? optionLabel(value) : value) + t('customSuffix') }, ...options]
   return h('label', { style: { display: 'block' } },
     h('span', { style: labelStyle }, label),
     h('select', {
@@ -265,7 +265,9 @@ function TierSection({ t, api, remote }) {
     try {
       const res = await api.llm.models({})
       if (res.result.ok) {
-        setCatalog({ groups: catalogFromGroups(res.result.value.groups), loaded: true, fail: null })
+        const failures = Array.isArray(res.result.value.failures) ? res.result.value.failures : []
+        const failureText = failures.length > 0 ? failures.map((f) => String((f && (f.message || f.provider)) || f)).join('; ') : null
+        setCatalog({ groups: catalogFromGroups(res.result.value.groups), loaded: true, fail: failureText })
         return
       }
       setCatalog((c) => ({ ...c, fail: String((res.result.error && res.result.error.message) || 'catalog error') }))
@@ -328,6 +330,11 @@ function TierSection({ t, api, remote }) {
     setSaving(true)
     setNotice(null)
     try {
+      const chains = [draft.strongFallback || [], draft.cheapFallback || []]
+      if (chains.some((chain) => chain.some((entry) => !entry.provider || !entry.model || !entry.reasoningEffort))) {
+        setNotice({ kind: 'error', text: t('addEmpty') })
+        return
+      }
       const res = await api.settings.update({ ns: SETTINGS_NS, patch: patch() })
       if (res.result.ok) setNotice({ kind: 'ok', text: t('saved') })
       else setNotice({ kind: 'error', text: t('saveFail') + String((res.result.error && res.result.error.message) || 'rejected') })
@@ -385,9 +392,17 @@ function TierSection({ t, api, remote }) {
     return (m ? effortOptionsFor(m) : []).map((id) => ({ value: id, label: id }))
   }
 
+  const setTierProvider = (tierKey, provider) => {
+    const models = modelOptions(provider)
+    const model = models.some((m) => m.value === draft[tierKey + 'Model']) ? draft[tierKey + 'Model'] : (models[0] ? models[0].value : '')
+    const efforts = effortOptions(provider, model)
+    const effort = efforts.some((e) => e.value === draft[tierKey + 'Effort']) ? draft[tierKey + 'Effort'] : (efforts[0] ? efforts[0].value : '')
+    setDraft((d) => (d === null ? d : { ...d, [tierKey + 'Provider']: provider, [tierKey + 'Model']: model, [tierKey + 'Effort']: effort }))
+  }
+
   // one provider/model/effort triplet
   const triple = (tKey, d, disabled) => h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 } },
-    selectOrText(t, t('provider'), d.provider, providerOptions(), (v) => setField(tKey + 'Provider', v), disabled),
+    selectOrText(t, t('provider'), d.provider, providerOptions(), (v) => setTierProvider(tKey, v), disabled),
     selectOrText(t, t('model'), d.model, modelOptions(d.provider), (v) => setField(tKey + 'Model', v), disabled),
     selectOrText(t, t('effort'), d.effort, effortOptions(d.provider, d.model), (v) => setField(tKey + 'Effort', v), disabled))
 
@@ -609,7 +624,7 @@ exports.apply = function apply(ctx) {
       name: 'conversation.chat.commandview',
       id: 'tier',
       order: 0,
-      locale: NS,
+      key: 'tier',
       inject: () => ({ t }),
     }, TierCommandView)
   })
