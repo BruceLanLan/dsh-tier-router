@@ -3,9 +3,9 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-ready-4B32C3)](https://github.com/topics/dsh-plugin)
 
-Routes model steps by task difficulty: a **strong tier (deepseek-v4-pro by default)
-handles planning / architecture / review**, while a **cheap tier (deepseek-v4-flash by
-default) handles day-to-day implementation**. Inspired by Claude Code's `/advisor`
+handles planning / architecture / review**, while a **cheap tier (cctq/gpt-5.6-terra by
+default) handles day-to-day implementation**, with per-tier fallback chains and
+task-intensity reasoning effort. Inspired by Claude Code's `/advisor`
 (consult a stronger model for hard decisions) and `opusplan` (strong model in plan mode,
 cheap model for execution), implemented on DeepSeek Harness through its official seams,
 with an escalation gate, failure auto-escalation, and subagent tiering on top.
@@ -72,6 +72,22 @@ sequenceDiagram
   `tier_configure` tool can point either tier at any registered provider/model (defaults:
   `deepseek-official/deepseek-v4-pro(max)` and `deepseek-official/deepseek-v4-flash(high)`).
   Configuration persists in the `tier-router` settings namespace and survives restarts
+
+- **Per-tier fallback chains**: each tier keeps an ordered fallback chain. If the primary
+  model is unavailable (unknown model, quota, rate limit, missing/invalid credential,
+  server/transport error, or any status >= 500 failure), the next chain entry runs the
+  same task and the tier returns to its primary after the fallback TTL (default 5 min,
+  `state.fallbackTtlMs`). The chain is tracked per agent (subagent children included)
+  and independently of failure auto-escalation; an exhausted chain clears and lets the
+  original error surface.
+- **Task-intensity reasoning effort**: the strong tier follows your session model
+  selection by default (`/tier set strong follow-session`); the cheap tier starts at
+  `medium` and raises itself to `high`/`max` (bounded by the model's declared efforts,
+  e.g. cctq declares low/medium/high) on cheap-tier retry errors, high-impact guard
+  denials, or the `tier_escalate_effort` tool; `/tier effort <medium|high|max>` sets it
+  manually. `tier_configure` and `/tier set` validate every effort against
+  `llm.resolveModelInfo` when metadata is available.
+
   (pass `sessionOnly: true` for a transient change).
 - **High-impact escalation gate (deterministic guard)**: while the cheap tier executes,
   `tools/pre-execute` denies high-impact tool calls and requires switching to the strong
