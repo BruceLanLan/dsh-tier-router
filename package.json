@@ -1,8 +1,8 @@
 {
   "name": "dsh-tier-router",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "type": "module",
-  "description": "Tiered model routing for DeepSeek Harness: a strong tier for planning/architecture/review, a cheap tier for implementation, with plan-mode-aware auto routing, advisor/review consultations, a high-impact escalation guard, failure auto-escalation, durable tier configuration, and subagent tiering.",
+  "description": "Tiered model routing for DeepSeek Harness (+ fallback chains + task-intensity effort): a strong tier for planning/architecture/review, a cheap tier for implementation, with plan-mode-aware auto routing, per-tier model fallback chains, task-intensity reasoning effort selection, advisor/review consultations, a high-impact escalation guard, failure auto-escalation, durable tier configuration, and subagent tiering.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -14,10 +14,12 @@
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./client/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "client",
     "cordis.patch.yml",
     "agent-presets",
     "CHANGELOG.md"
@@ -29,6 +31,15 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
     }
   },
   "peerDependencies": {

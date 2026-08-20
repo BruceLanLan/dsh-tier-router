@@ -4,8 +4,8 @@
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-ready-4B32C3)](https://github.com/topics/dsh-plugin)
 
 按任务难度分层路由模型：**强档（默认 deepseek-v4-pro）负责规划 / 架构 / 评审**，
-**弱档（默认 deepseek-v4-flash）负责日常编码实现**。灵感来自 Claude Code 的
-`/advisor`（困难决策时咨询更强模型）与 `opusplan`（计划模式用强模型、执行切便宜模型），
+**弱档（默认 cctq/gpt-5.6-terra）负责日常编码实现**，并支持每档回退链与按任务强度
+自动选择思考强度。灵感来自 Claude Code 的
 在 DeepSeek Harness 里用官方机制实现，并扩展了难度升级门、失败自动升级与 subagent 分层。
 
 [English](README.md) · 中文
