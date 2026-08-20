@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isHighImpact, hasRecursiveForceRm, resolveTierSpec } from '../lib/pure.js'
+import { isHighImpact, hasRecursiveForceRm, resolveTierSpec, classifyFallback, validateReasoningEffort, nextEffortStep, fallbackActive, advanceFallback, migrateTierConfig, EFFORT_LADDER, DEFAULT_TIER_CONFIG, FALLBACK_TRIGGER_CODES, FALLBACK_IGNORE_CODES } from '../lib/pure.js'
 
 // ---- rm -rf detection (including split flags) -----------------------------
 
@@ -200,6 +200,170 @@ test('inherit policy on children falls through to mode/plan', () => {
   assert.equal(resolveTierSpec({ isChild: true, subagentPolicy: 'inherit', mode: 'auto', planActive: false }), 'cheap')
 })
 
+test('delegated mode keeps the main agent un-routed and still routes children', () => {
+  assert.equal(resolveTierSpec({ mode: 'delegated', isChild: false, planActive: true }), null)
+  assert.equal(resolveTierSpec({ mode: 'delegated', isChild: false, escalated: true }), null)
+  assert.equal(resolveTierSpec({ mode: 'delegated', isChild: true, subagentPolicy: 'inherit', planActive: true }), 'strong')
+  assert.equal(resolveTierSpec({ mode: 'delegated', isChild: true, subagentPolicy: 'inherit', planActive: false }), 'cheap')
+  assert.equal(resolveTierSpec({ sessionMode: 'delegated', mode: 'strong', isChild: false }), null)
+  assert.equal(resolveTierSpec({ sessionMode: 'delegated', mode: 'strong', isChild: true, subagentPolicy: 'cheap' }), 'cheap')
+})
+
+test('session auto explicitly overrides a delegated global default', () => {
+  assert.equal(resolveTierSpec({ sessionMode: 'auto', mode: 'delegated', isChild: false, planActive: true }), 'strong')
+  assert.equal(resolveTierSpec({ sessionMode: 'auto', mode: 'delegated', isChild: false, planActive: false }), 'cheap')
+})
+
 test('off mode yields no decision', () => {
   assert.equal(resolveTierSpec({ mode: 'off' }), null)
+})
+// ---- classifyFallback ----------------------------------------------------
+
+test('classifyFallback: model-availability codes trigger fallback', () => {
+  for (const code of FALLBACK_TRIGGER_CODES) {
+    assert.equal(classifyFallback({ message: 'x', code }), 'fallback', code)
+  }
+  assert.equal(classifyFallback({ message: 'x', code: 'SERVER', status: 502 }), 'fallback')
+})
+
+test('classifyFallback: status >= 500 without a code still triggers fallback', () => {
+  assert.equal(classifyFallback({ message: 'boom', status: 502 }), 'fallback')
+  assert.equal(classifyFallback({ message: 'boom', status: 503, providerRetryAfterMs: 1000 }), 'fallback')
+  assert.equal(classifyFallback({ message: 'boom', status: 429 }), 'escalate', '429 is rate limit only when coded')
+})
+
+test('classifyFallback: non-model problems are ignored', () => {
+  for (const code of FALLBACK_IGNORE_CODES) {
+    assert.equal(classifyFallback({ message: 'x', code }), 'ignore', code)
+  }
+})
+
+test('classifyFallback: unknown shapes keep the original escalate behavior', () => {
+  assert.equal(classifyFallback({ message: 'boom' }), 'escalate')
+  assert.equal(classifyFallback({ code: 'SOME_NEW_CODE' }), 'escalate')
+  assert.equal(classifyFallback(null), 'escalate')
+  assert.equal(classifyFallback(undefined), 'escalate')
+  assert.equal(classifyFallback('boom'), 'escalate')
+})
+
+// ---- reasoning effort validation -----------------------------------------
+
+const CCTQ_EFFORTS = ['low', 'medium', 'high'].map((id) => ({ id, name: id }))
+const DS_EFFORTS = ['off', 'high', 'max'].map((id) => ({ id, name: id }))
+
+test('validateReasoningEffort accepts declared efforts and rejects the rest', () => {
+  assert.deepEqual(validateReasoningEffort('medium', CCTQ_EFFORTS), { ok: true, available: ['low', 'medium', 'high'] })
+  assert.deepEqual(validateReasoningEffort('high', CCTQ_EFFORTS), { ok: true, available: ['low', 'medium', 'high'] })
+  const r = validateReasoningEffort('max', CCTQ_EFFORTS)
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.available, ['low', 'medium', 'high'])
+  assert.equal(validateReasoningEffort('off', DS_EFFORTS).ok, true)
+  assert.equal(validateReasoningEffort('high', DS_EFFORTS).ok, true)
+  assert.equal(validateReasoningEffort('max', DS_EFFORTS).ok, true)
+  assert.equal(validateReasoningEffort('medium', DS_EFFORTS).ok, false)
+})
+
+test('validateReasoningEffort is lenient when declarations are unavailable', () => {
+  assert.deepEqual(validateReasoningEffort('max', []), { ok: true, available: [] })
+  assert.deepEqual(validateReasoningEffort('max', undefined), { ok: true, available: [] })
+  assert.deepEqual(validateReasoningEffort('max', null), { ok: true, available: [] })
+})
+
+test('validateReasoningEffort rejects non-string efforts', () => {
+  assert.equal(validateReasoningEffort('', CCTQ_EFFORTS).ok, false)
+  assert.equal(validateReasoningEffort(undefined, CCTQ_EFFORTS).ok, false)
+  assert.equal(validateReasoningEffort(null, CCTQ_EFFORTS).ok, false)
+})
+
+test('nextEffortStep walks the medium -> high -> max ladder within declarations', () => {
+  assert.equal(nextEffortStep('medium', ['low', 'medium', 'high']), 'high')
+  assert.equal(nextEffortStep('high', ['low', 'medium', 'high']), null, 'cctq ceiling is high')
+  assert.equal(nextEffortStep('medium', ['off', 'high', 'max']), 'high')
+  assert.equal(nextEffortStep('high', ['off', 'high', 'max']), 'max')
+  assert.equal(nextEffortStep('max', ['off', 'high', 'max']), null)
+  assert.equal(nextEffortStep('medium', undefined), 'high', 'lenient when declarations unknown')
+  assert.equal(nextEffortStep('bogus', ['low', 'medium', 'high']), null)
+})
+
+// ---- fallback chain state ------------------------------------------------
+
+test('fallbackActive requires an active chain position within its TTL', () => {
+  assert.equal(fallbackActive(null, 1000), false)
+  assert.equal(fallbackActive({ index: -1, until: 99999 }, 1000), false, 'index -1 = main model')
+  assert.equal(fallbackActive({ index: 0, until: 2000 }, 1000), true)
+  assert.equal(fallbackActive({ index: 0, until: 1000 }, 1000), false, 'expired at boundary')
+  assert.equal(fallbackActive({ index: 2, until: 99999 }, 1000), true)
+})
+
+test('advanceFallback walks the chain one step per failure', () => {
+  const chain = [{ provider: 'p1', model: 'm1' }, { provider: 'p2', model: 'm2' }]
+  const first = advanceFallback(null, chain, 1000, 300000)
+  assert.deepEqual(first, { index: 0, until: 301000 })
+  const second = advanceFallback(first, chain, 2000, 300000)
+  assert.deepEqual(second, { index: 1, until: 302000 })
+  assert.equal(advanceFallback(second, chain, 3000, 300000), null, 'chain exhausted')
+  assert.equal(advanceFallback(null, [], 1000, 300000), null, 'empty chain')
+  assert.equal(advanceFallback(null, chain, 1000, 0).until, 301000, 'defaults TTL when 0')
+})
+
+// ---- config migration ----------------------------------------------------
+
+test('migrateTierConfig fills tier defaults when no config exists', () => {
+  const strong = migrateTierConfig('strong', null)
+  assert.equal(strong.followSession, true)
+  assert.equal(strong.provider, 'deepseek-official')
+  assert.equal(strong.model, 'deepseek-v4-pro')
+  assert.equal(strong.reasoningEffort, 'max')
+  assert.deepEqual(strong.fallback, [{ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }])
+  assert.equal(strong.label, 'strong')
+  const cheap = migrateTierConfig('cheap', null)
+  assert.equal(cheap.followSession, false)
+  assert.equal(cheap.provider, 'deepseek-official')
+  assert.equal(cheap.model, 'deepseek-v4-flash')
+  assert.equal(cheap.reasoningEffort, 'medium')
+  assert.deepEqual(cheap.fallback, [])
+})
+
+test('migrateTierConfig migrates legacy configs without error', () => {
+  const legacy = migrateTierConfig('cheap', { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' })
+  assert.equal(legacy.followSession, false, 'cheap default followSession')
+  assert.deepEqual(legacy.fallback, [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' }], 'fallback mirrors the legacy primary')
+  const legacyStrong = migrateTierConfig('strong', { provider: 'opencode-go', model: 'v4-pro', reasoningEffort: 'high' })
+  assert.equal(legacyStrong.followSession, true, 'strong default followSession')
+  assert.deepEqual(legacyStrong.fallback, [{ provider: 'opencode-go', model: 'v4-pro', reasoningEffort: 'high' }])
+})
+
+test('migrateTierConfig keeps an explicit empty fallback chain disabled', () => {
+  const cfg = migrateTierConfig('cheap', { provider: 'cctq', model: 'gpt-5.6-terra', reasoningEffort: 'medium', fallback: [] })
+  assert.deepEqual(cfg.fallback, [])
+})
+
+test('migrateTierConfig keeps explicit followSession and fallback chains', () => {
+  const raw = {
+    followSession: false,
+    provider: 'cctq',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'high',
+    fallback: [
+      { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
+      { provider: 'cctq', model: 'claude-opus-5', reasoningEffort: 'low' },
+      { provider: '', model: 'bogus', reasoningEffort: 'x' },
+    ],
+  }
+  const cfg = migrateTierConfig('cheap', raw)
+  assert.equal(cfg.followSession, false)
+  assert.equal(cfg.provider, 'cctq')
+  assert.equal(cfg.reasoningEffort, 'high')
+  assert.deepEqual(cfg.fallback, [
+    { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
+    { provider: 'cctq', model: 'claude-opus-5', reasoningEffort: 'low' },
+  ], 'invalid entries are dropped')
+})
+
+test('DEFAULT_TIER_CONFIG and EFFORT_LADDER match the v0.5.0 contract', () => {
+  assert.deepEqual(EFFORT_LADDER, ['medium', 'high', 'max'])
+  assert.equal(DEFAULT_TIER_CONFIG.strong.followSession, true)
+  assert.equal(DEFAULT_TIER_CONFIG.cheap.followSession, false)
+  assert.equal(DEFAULT_TIER_CONFIG.cheap.provider, 'deepseek-official')
+  assert.equal(DEFAULT_TIER_CONFIG.cheap.model, 'deepseek-v4-flash')
 })

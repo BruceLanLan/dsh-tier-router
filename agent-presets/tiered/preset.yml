@@ -1,2 +1,2 @@
-name: tiered (layered routing)
-description: The standard coding agent plus dsh-tier-router: a strong tier for planning/review, a cheap tier for implementation, /advisor consultations, failure auto-escalation, and the high-impact guard.
+name: tiered
+description: "标准编码 agent + dsh-tier-router：按任务难度分层路由强档与弱档；主会话可跟随计划状态切换，也可固定使用模型选择器，仅对子代理分层。支持每档回退链、临时失败升级、普通与有界子代理分层，以及在 Web 设置页配置模型提供方、思考强度、回退链、路由模式和子代理策略。"
