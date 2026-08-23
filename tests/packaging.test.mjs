@@ -18,11 +18,13 @@ test('cordis.patch.yml is a top-level YAML array (never comment-only)', () => {
   assert.ok(first.trim() === '[]' || first.trim().startsWith('- '), 'first entry is an array marker: ' + first)
 })
 
-test('cordis.patch.yml documents the preset install path', () => {
+test('cordis.patch.yml installs the host preset synchronizer only', () => {
   const text = readFileSync(join(ROOT, 'cordis.patch.yml'), 'utf8')
-  assert.ok(text.includes('agent preset'), 'mentions the agent preset install path')
   const code = text.split('\n').filter((line) => !line.trim().startsWith('#')).join('\n')
-  assert.ok(!code.includes('- id: tier-routing'), 'ships no host insert row by design')
+  assert.ok(code.includes('- id: tier-preset-discovery'), 'ships a host discovery row')
+  assert.ok(code.includes('name: dsh-tier-router'), 'host row loads this package')
+  assert.ok(code.includes('hostPresetSync: true'), 'host row is explicitly sync-only')
+  assert.ok(!code.includes('- id: tier-routing'), 'agent routing remains preset-scoped')
 })
 
 test('shipped agent-presets/tiered preset contains the tier-routing row', () => {
