@@ -108,6 +108,23 @@ All notable changes to dsh-tier-router are documented here.
 - Model fields are dropdowns backed by the model catalog instead of free text
   (custom values are preserved).
 
+## [0.4.8] - 2026-08-16
+
+### Fixed
+- The inbox/plan/escalation listeners no longer rewrite headers of sessions
+  the router does not manage: blank sessions are left to the host model picker,
+  and a header for any manually selected provider/model is never overridden.
+- Automatic routing now continues only after the plugin itself has established
+  a tier header, or after an explicit `/tier strong|cheap|auto` opt-in; `off`
+  still disables everything.
+- This fixes the model-config mismatch that produced undefined
+  provider/asyncIterator failures on new sessions when a manually selected
+  model was being overwritten by tier routing.
+
+### Added
+- Regression tests: blank sessions and non-tier (manually selected) headers
+  must not be rewritten by inbox routing.
+
 ## [0.4.7] - 2026-08-16
 
 ### Fixed

@@ -14,8 +14,12 @@ jobs:
         with:
           node-version: 22
       # The smoke suite imports the real bundle, which needs the harness tool
-      # DSL and schemastery packages (available on the public npm registry).
-      - run: npm install --no-save @deepseek-ai/dsh-tools @deepseek-ai/schemastery
+      # DSL and schemastery packages (devDependencies, exact versions matching
+      # the deployment). The root package carries no peerDependencies (they are
+      # advisory service requirements only): npm's peer-tree resolution against
+      # newly published harness versions crashed arborist, hit ERESOLVE, or
+      # produced false "up to date" no-ops on npm 10.
+      - run: npm install --no-audit --no-fund
       - run: node --check lib/index.js
       - run: node --check lib/pure.js
       - run: node --test "tests/**/*.test.mjs"
