@@ -23,6 +23,13 @@ function makeAgent(id, origin) {
   return { id, session, writes }
 }
 
+function seedTierHeader(agent, model = 'deepseek-v4-flash', effort = 'high') {
+  agent.session.append('request/header', {
+    header: { config: { provider: 'deepseek-official', model, reasoningEffort: effort } },
+    reason: 'change',
+  })
+}
+
 function makeContext() {
   const ctx = {
     listeners: {},
@@ -145,19 +152,22 @@ test('plan-flip handler still follows plan state in auto mode', async () => {
   const { ctx, services } = makeContext()
   apply(ctx)
   const main = makeAgent('main')
+  seedTierHeader(main)
+  const baseline = main.writes.length
   services.agents.get = (id) => (id === main.session.id ? main : null)
   for (const fn of ctx.listeners['session/event']) fn(main.session, { type: 'plan/mode', data: { active: true } })
-  const headers = main.writes.filter((w) => w.kind === 'request/header')
+  const headers = main.writes.slice(baseline).filter((w) => w.kind === 'request/header')
   assert.equal(headers[0].payload.header.config.model, 'deepseek-v4-pro', 'auto mode enters plan on strong')
-  main.writes.length = 0
+  const baseline2 = main.writes.length
   for (const fn of ctx.listeners['session/event']) fn(main.session, { type: 'plan/mode', data: { active: false } })
-  assert.equal(main.writes.filter((w) => w.kind === 'request/header')[0].payload.header.config.model, 'deepseek-v4-flash')
+  assert.equal(main.writes.slice(baseline2).filter((w) => w.kind === 'request/header')[0].payload.header.config.model, 'deepseek-v4-flash')
 })
 
 test('failure escalation now covers built-in-subagent children (v0.4.1 fix)', async () => {
   const { ctx, services } = makeContext()
   apply(ctx)
   const child = makeAgent('child', 'subagent')
+  seedTierHeader(child)
   for (const fn of ctx.listeners['agent/error']) {
     fn({ agent: child, error: { message: 'boom 1' } })
     fn({ agent: child, error: { message: 'boom 2' } })
@@ -257,14 +267,31 @@ test('auto routing folds plan state from the session log when planMode is unreac
   services.planMode = undefined
   apply(ctx)
   const main = makeAgent('main')
+  seedTierHeader(main)
+  const baseline = main.writes.length
   services.agents.get = (id) => (id === main.session.id ? main : null)
   main.session.events.push({ type: 'plan/mode', data: { active: true } })
   for (const fn of ctx.listeners['agent/inbox/inserted']) {
     fn({ agent: main, message: { source: { kind: 'user' }, content: [] } })
   }
-  const headers = main.writes.filter((w) => w.kind === 'request/header')
+  const headers = main.writes.slice(baseline).filter((w) => w.kind === 'request/header')
   assert.equal(headers.length, 1)
   assert.equal(headers[0].payload.header.config.model, 'deepseek-v4-pro', 'plan-active session routes strong without the planMode service')
+})
+
+test('inbox routing leaves a blank or manually selected model alone', () => {
+  const { ctx } = makeContext()
+  apply(ctx)
+  const main = makeAgent('main')
+  const inbox = ctx.listeners['agent/inbox/inserted'][0]
+
+  inbox({ agent: main, message: { source: { kind: 'user' }, content: [] } })
+  assert.equal(main.writes.length, 0, 'blank sessions must let host model selection run first')
+
+  seedTierHeader(main, 'opencode-go', undefined)
+  main.writes.length = 0
+  inbox({ agent: main, message: { source: { kind: 'user' }, content: [] } })
+  assert.equal(main.writes.length, 0, 'non-tier headers belong to the manually selected model')
 })
 
 test('/tier plan appends plan/mode to the session log when planMode is unreachable', async () => {
