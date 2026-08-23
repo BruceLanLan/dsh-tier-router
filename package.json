@@ -49,5 +49,9 @@
   "engines": {
     "node": "^22.19 || >=24"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.0.1-rc.1",
+    "@deepseek-ai/schemastery": "3.18.1"
+  }
 }

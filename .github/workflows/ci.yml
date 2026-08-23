@@ -14,11 +14,12 @@ jobs:
         with:
           node-version: 22
       # The smoke suite imports the real bundle, which needs the harness tool
-      # DSL and schemastery packages (available on the public npm registry).
-      # Versions are pinned and audit/fund disabled: the unpinned resolution
-      # intermittently hit the npm arborist crash "Cannot read properties of
-      # null (reading 'children')" on the runner.
-      - run: npm install --no-save --no-audit --no-fund --legacy-peer-deps @deepseek-ai/dsh-tools@0.0.1-rc.1 @deepseek-ai/schemastery@3.18.1
+      # DSL and schemastery packages (devDependencies, exact versions). Peer
+      # resolution is skipped and audit/fund disabled: the root package's rc
+      # peer ranges and newly published harness versions made both unpinned
+      # installs and explicit-arg installs flaky on npm 10 (arborist crashes,
+      # ERESOLVE, and false "up to date" no-ops).
+      - run: npm install --no-audit --no-fund --legacy-peer-deps
       - run: node --check lib/index.js
       - run: node --check lib/pure.js
       - run: node --test "tests/**/*.test.mjs"
