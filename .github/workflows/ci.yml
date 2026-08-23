@@ -15,7 +15,10 @@ jobs:
           node-version: 22
       # The smoke suite imports the real bundle, which needs the harness tool
       # DSL and schemastery packages (available on the public npm registry).
-      - run: npm install --no-save @deepseek-ai/dsh-tools @deepseek-ai/schemastery
+      # Versions are pinned and audit/fund disabled: the unpinned resolution
+      # intermittently hit the npm arborist crash "Cannot read properties of
+      # null (reading 'children')" on the runner.
+      - run: npm install --no-save --no-audit --no-fund @deepseek-ai/dsh-tools@0.0.1-rc.1 @deepseek-ai/schemastery@3.18.1
       - run: node --check lib/index.js
       - run: node --check lib/pure.js
       - run: node --test "tests/**/*.test.mjs"
