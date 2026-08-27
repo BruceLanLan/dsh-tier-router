@@ -23,6 +23,9 @@ jobs:
       - run: node --check lib/index.js
       - run: node --check lib/pure.js
       - run: node --check lib/preset-sync.js
+      # The WebUI client is hand-authored CJS for the ModuleLoader; syntax
+      # check it so a future edit cannot ship a broken bundle.
+      - run: node --check client/client.js
       - run: node --test "tests/**/*.test.mjs"
       # Packaging regression: the published tarball must keep every runtime
       # surface (lib, the agent-plane preset, the WebUI client, the patch).
