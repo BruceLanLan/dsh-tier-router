@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to dsh-tier-router are documented here.
-## [0.5.0] - 2026-08-20
+## [0.5.0] - 2026-08-24
 
 ### Added
 - **Delegated routing mode**: the main agent stays on the DSH Web model-picker
