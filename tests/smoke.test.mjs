@@ -520,6 +520,10 @@ test('tier_advisor and tier_review stream through the configured strong tier', a
   apply(ctx)
   const advisor = services.tools.registered.find((t) => t.name === 'tier_advisor')
   const review = services.tools.registered.find((t) => t.name === 'tier_review')
+  // With followSession (the v0.5.0 default) the descriptions must say the
+  // strong tier follows the session selection, not a fixed configured model.
+  assert.ok(advisor.description.includes('follows your session model selection'), 'advisor description reflects followSession')
+  assert.ok(review.description.includes('follows your session model selection'), 'review description reflects followSession')
   const a = await advisor.execute({ question: 'should we proceed?' }, { agent: makeAgent('main'), signal: undefined })
   assert.equal(a.advice, 'MOCK ADVICE')
   assert.equal(a.ok, true)
