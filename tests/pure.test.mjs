@@ -382,6 +382,13 @@ test('shell wrapper detection stays command-position anchored', () => {
   assert.equal(hasRecursiveForceRm('sh -c "echo rm -rf is text"'), false)
   assert.equal(hasRecursiveForceRm('sh script.sh'), false)
   assert.equal(hasRecursiveForceRm('bash -c "ls -la"'), false)
+  // The wrapper itself must be at command position: prose mentioning it is not.
+  assert.equal(hasRecursiveForceRm('echo sh -c "rm -rf x"'), false, 'echo of a wrapper')
+  assert.equal(hasRecursiveForceRm('grep "sh -c rm -rf" notes.txt'), false, 'grep for a wrapper')
+  assert.equal(hasRecursiveForceRm('git commit -m "sh -c rm -rf"'), false, 'commit message')
+  assert.equal(hasRecursiveForceRm('echo eval rm -rf'), false, 'echo of eval')
+  assert.ok(hasRecursiveForceRm('/bin/sh -c "rm -rf /x"'), 'absolute wrapper path')
+  assert.ok(hasRecursiveForceRm('true; sh -c "rm -rf /x"'), 'wrapper after separator')
 })
 
 test('classifyFallback: TIMEOUT and NO_ADAPTER (emitted by rc.8 adapters) trigger fallback', () => {

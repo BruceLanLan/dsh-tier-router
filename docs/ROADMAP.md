@@ -145,7 +145,8 @@
 ## M8 · 兼容与一致性收尾（小）
 
 1. CI 增加 `@next` job：`npm install @deepseek-ai/dsh-tools@next @deepseek-ai/schemastery@latest` 后跑 smoke 套件，`continue-on-error: true` → 验证点：CI 页面出现该 job。
-2. `tier_worker` 改用 `strongStandaloneTarget()` 决定强档目标（与 advisor/review 一致） → 验证点：followSession 下 worker 的 `agentOptions` 等于会话选择。
+2. `tier_worker` 改用 `strongStandaloneTarget()` 决定强档目标（与 advisor/review 一致），工具返回值报告实际路由 → 验证点：followSession 下 worker 的 `agentOptions` 与返回的 `provider/model` 都等于会话选择。
+2b. `pendingWorkers` 领养同时匹配父代理身份（`session.header.parentSession === parent.session.id`），避免并行普通子代理误领 → 验证点：smoke 里两个同路由子代理同时创建，只有 worker 那个进入 `childTiers`。
 3. 默认强档回退链：改为空，或改成不同路由（需用户选） → 验证点：`migrateTierConfig('strong', null)` 用例更新。
 4. WebUI 未注册时的 4s 轮询改为指数退避（上限 60s）。
 5. `pwsh` 工具最小守卫（`Remove-Item -Recurse -Force`、`rm -r -fo`）。
