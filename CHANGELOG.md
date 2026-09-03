@@ -1,6 +1,41 @@
 # Changelog
 
 All notable changes to dsh-tier-router are documented here.
+
+## [0.5.1] - 2026-09-03
+
+Review round against the DSH 0.1.0-rc.8 host sources (event contracts also
+checked against 0.1.2-rc.1, which declares the same agent events). Findings,
+evidence and the roadmap live in `docs/REVIEW-2026-09-03.md` and
+`docs/ROADMAP.md`.
+
+### Fixed
+- **`tier_worker` explicit tier was overridden by subagent policy routing.**
+  The in-process subagent driver inserts the child's prompt (source `user`)
+  synchronously inside `subagents.start()`, so `agent/inbox/inserted` fired for
+  the child before the tool could record its explicit tier; under
+  `auto` + plan inactive + `inherit`, a `tier: "strong"` worker was re-routed
+  to the cheap model (and vice versa with a `strong` policy). The tool now
+  announces the requested route before `start()` and the inbox handler adopts
+  it, so the child keeps its tier and its header carries the tier's effort.
+  Regression test: `tier_worker child keeps its explicit route and effort when
+  the inbox listener runs first`.
+- **Fallback chains ignored `TIMEOUT` and `NO_ADAPTER`.** Both are emitted by
+  the rc.8 adapters (`dsh-llm-deepseek`: TIMEOUT; `dsh-llm-pi-ai`: TIMEOUT,
+  NO_ADAPTER; llm core: NO_ADAPTER) but were missing from
+  `FALLBACK_TRIGGER_CODES`, so a hung or unroutable primary never fell back.
+- **Fallback now defers to downstream recovery.** The `agent/request-error`
+  listener awaits `next()` first and changes route only when downstream
+  (DSH's `dsh-llm-retry` backoff, which honors `providerRetryAfterMs`) returns
+  no decision. Behavior no longer depends on listener registration order.
+- **Guard: `rm -rf` inside shell wrappers.** `sh -c "rm -rf x"`,
+  `bash -lc '…'`, `zsh -c …` and `eval "rm -rf x"` are now denied on the cheap
+  tier; `sh -c "echo rm -rf"` and `sh script.sh` still pass.
+- Docs: README opener was truncated mid-sentence in both languages; test count
+  was stale (86 cases now); the 0.5.0 "Changed" entry misdescribed the cheap
+  defaults (code default is `deepseek-official/deepseek-v4-flash@medium` with
+  no fallback); added the in-memory per-session mode limitation.
+
 ## [0.5.0] - 2026-08-24
 
 ### Added
@@ -100,8 +135,9 @@ All notable changes to dsh-tier-router are documented here.
 
 ### Changed
 - Defaults: strong = followSession with deepseek-official/deepseek-v4-pro@max
-  fallback; cheap = cctq/gpt-5.6-terra@medium with
-  deepseek-official/deepseek-v4-flash@high fallback.
+  as the explicit primary and a same-route fallback entry; cheap =
+  deepseek-official/deepseek-v4-flash@medium with no fallback (corrected in
+  0.5.1: this entry previously described a local test configuration).
 - Success recovery is conservative: no LLM success event is emitted by the
   rc.7 agent loop, so a fallback stays active until its TTL expires and the
   next inbox write keeps the fallback header while the TTL is valid.

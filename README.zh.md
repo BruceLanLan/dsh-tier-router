@@ -5,8 +5,9 @@
 
 按任务难度分层路由模型：**强档（默认 deepseek-v4-pro）负责规划 / 架构 / 评审**，
 **弱档（默认 deepseek-v4-flash）负责日常编码实现**，并支持每档回退链与按任务强度
-自动选择思考强度。灵感来自 Claude Code 的
-在 DeepSeek Harness 里用官方机制实现，并扩展了难度升级门、失败自动升级与 subagent 分层。
+自动选择思考强度。灵感来自 Claude Code 的 `/advisor`（把难题交给更强的模型）与
+`opusplan`（计划用强模型、执行用弱模型），在 DeepSeek Harness 里用官方机制实现，
+并扩展了难度升级门、失败自动升级与 subagent 分层。
 
 [English](README.md) · 中文
 
@@ -61,9 +62,10 @@ sequenceDiagram
   给出 `APPROVE / NEEDS-CHANGES / BLOCKED` 及分级问题清单。
 - **失败自动升级**：同一会话在窗口内连续出错（默认 60s 内 2 次）自动临时切到强档
   （默认 180s），TTL 过期自动回落；`off` 会话不参与。
-- **每档回退链**：每个 tier 都有有序回退链。主模型不可用（未知模型、配额、限流、
-  凭据缺失/失效、server/transport 错误或任意 >= 500）时，路由器在受支持的
-  request-error 边界切换到下一项并重试同一步。移除全部条目即可关闭回退。回退状态按
+- **每档回退链**：每个 tier 都有有序回退链。主模型不可用（未知模型 / 无适配器、配额、
+  限流、凭据缺失/失效、server/transport 错误、超时或任意 >= 500）时，路由器在受支持的
+  request-error 边界切换到下一项并重试同一步。宿主自带的 `dsh-llm-retry` 退避总是先跑，
+  只有下游放弃恢复后才换路由。移除全部条目即可关闭回退。回退状态按
   agent 与 tier 分开记录，TTL（默认 5 分钟，`state.fallbackTtlMs`）后回到主模型，
   且计划模式切换不会把弱档回退链误解释为强档回退链。
 - **可配置双档（持久化）**：`/tier set <strong|cheap> <provider> <model> [effort]` 或
@@ -74,7 +76,8 @@ sequenceDiagram
 - **高危升级门（确定性守卫）**：当执行档为弱档时，`tools/pre-execute` 拦截高危工具调用，
   要求先切到强档再执行，不依赖模型自觉。守卫规则（纯逻辑 `lib/pure.js`，单元测试覆盖）：
   - `rm -rf` 全拼写：合并参数（`-rf`）、拆分参数（`-r -f`）、大小写（`-R`）、长参数
-    （`--recursive --force`）、前缀命令（`sudo rm -rf`、`busybox rm`）；
+    （`--recursive --force`）、前缀命令（`sudo rm -rf`、`busybox rm`）、
+    shell 包装（`sh -c "rm -rf …"`、`bash -lc '…'`、`eval "…"`）；
   - 破坏性命令：`mkfs`、`dd if=`、`sudo`、`shutdown/reboot/halt`、`git push --force/-f`、
     `git clean -f*`、`find ... -delete` / `find ... -exec rm`、`python -c` 里的
     `shutil.rmtree` / `os.remove`、`curl|sh`、`wget|sh`、`chmod` 到 `.ssh`、`chown`；
@@ -191,8 +194,8 @@ Tiered model routing
 ## 测试
 
 ```sh
-npm test        # node:test — 20 个用例：守卫正反矩阵、档位决策优先级、per-session 覆盖
-npm run check   # 语法检查 lib/index.js 与 lib/pure.js
+npm test        # node:test — 86 个用例：守卫/档位决策纯逻辑、mock 宿主 smoke 套件、preset 同步、打包回归
+npm run check   # 语法检查 lib/index.js、lib/pure.js 与 lib/preset-sync.js
 ```
 
 会话内严格多轮实测（动态插件形态）记录：
@@ -239,6 +242,9 @@ preset 行后重启 `dsh web` 并新开会话，用 `/tier status` 验证。（�
 ## 已知限制
 
 - 档位切换从下一步生效（header 在步骤构建前写入）。
+- 会话级路由模式（`/tier strong|cheap|auto|delegated|off`）只存在内存里：DSH 重启后，
+  恢复的会话都回到全局默认模式；最后写入的 `request/header` 仍决定该会话当时所在的模型。
+  （持久化会话模式已列入 `docs/ROADMAP.md`。）
 - 子代理全局档位策略（`/tier subagent`）是进程级的；worker 的单次派发档位始终优先。
 - 失败自动升级的完整"失败→自愈"现场序列在会话内已验证事件路径与单元逻辑，端到端
   现场触发建议按 FAQ 操作验证。

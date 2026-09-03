@@ -3,6 +3,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-ready-4B32C3)](https://github.com/topics/dsh-plugin)
 
+Routes model steps by task difficulty: a **strong tier (deepseek-v4-pro by default)
 handles planning / architecture / review**, while a **cheap tier (deepseek-v4-flash by
 default) handles day-to-day implementation**, with per-tier fallback chains and
 task-intensity reasoning effort. Inspired by Claude Code's `/advisor`
@@ -80,9 +81,11 @@ sequenceDiagram
   subagent policy. It uses the live model catalog when available and preserves custom
   routes when it is not.
 - **Per-tier fallback chains**: if the primary
-  model is unavailable (unknown model, quota, rate limit, missing/invalid credential,
-  server/transport error, or any status >= 500 failure), the router changes route at the
-  supported request-error boundary and retries the same step on the next entry. Remove
+  model is unavailable (unknown model / no adapter, quota, rate limit, missing/invalid
+  credential, server/transport error, timeout, or any status >= 500 failure), the router
+  changes route at the supported request-error boundary and retries the same step on the
+  next entry. The host's own `dsh-llm-retry` backoff always runs first: the route changes
+  only after downstream recovery declines the failure. Remove
   every entry to disable fallback. Fallback state is per agent and tier, returns to the
   primary after the fallback TTL (default 5 min, `state.fallbackTtlMs`), and never
   crosses from a cheap chain to a strong chain during a plan transition.
@@ -93,14 +96,13 @@ sequenceDiagram
   denials, or the `tier_escalate_effort` tool; `/tier effort <medium|high|max>` sets it
   manually. `tier_configure` and `/tier set` validate every effort against
   `llm.resolveModelInfo` when metadata is available.
-
-  (pass `sessionOnly: true` for a transient change).
 - **High-impact escalation gate (deterministic guard)**: while the cheap tier executes,
   `tools/pre-execute` denies high-impact tool calls and requires switching to the strong
   tier first — no reliance on model self-discipline. Guard rules (pure logic in
   `lib/pure.js`, unit-tested):
   - every `rm -rf` spelling: combined flags (`-rf`), split flags (`-r -f`), case variants
-    (`-R`), long flags (`--recursive --force`), runner prefixes (`sudo rm -rf`, `busybox rm`);
+    (`-R`), long flags (`--recursive --force`), runner prefixes (`sudo rm -rf`, `busybox rm`),
+    shell wrappers (`sh -c "rm -rf …"`, `bash -lc '…'`, `eval "…"`);
   - destructive commands: `mkfs`, `dd if=`, `sudo`, `shutdown/reboot/halt`,
     `git push --force/-f`, `git clean -f*`, `find ... -delete` / `find ... -exec rm`,
     `python -c` with `shutil.rmtree` / `os.remove`, `curl|sh`, `wget|sh`,
@@ -232,8 +234,8 @@ constants; configurable in a later version.
 ## Tests
 
 ```sh
-npm test        # node:test — 20 cases: guard positive/negative matrix, tier decision precedence, per-session overrides
-npm run check   # syntax check for lib/index.js and lib/pure.js
+npm test        # node:test — 86 cases: pure guard/decision logic, mocked-harness smoke suite, preset sync, packaging
+npm run check   # syntax check for lib/index.js, lib/pure.js and lib/preset-sync.js
 ```
 
 Verified in live multi-round sessions (dynamic-plugin form):
@@ -285,6 +287,10 @@ restart.)
 ## Known limitations
 
 - Tier switches take effect from the next step (the header is written before the step builds).
+- Per-session routing modes (`/tier strong|cheap|auto|delegated|off`) live in memory only:
+  after a DSH restart every resumed session is back on the global default mode. The
+  last written `request/header` still selects the model the session was on. (Durable
+  per-session modes are planned; see `docs/ROADMAP.md`.)
 - The subagent policy (`/tier subagent`) is process-wide and classifies child execution
   for the guard. A worker's tier is fixed at creation (`tier_worker` agentOptions); built-in
   `subagent`/`subagent_fork` children inherit the parent's model route.
