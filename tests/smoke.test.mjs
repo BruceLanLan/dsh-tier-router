@@ -591,3 +591,76 @@ test('/tier status reports fallback chains and cheap effort', async () => {
   assert.ok(out.text.includes('fallback: deepseek-official/deepseek-v4-flash@high'), out.text)
   assert.ok(out.text.includes('fallback TTL: 300s'), out.text)
 })
+// ---- v0.5.1 regressions ---------------------------------------------------
+
+test('an un-announced child on the strong route is still policy-routed to cheap (contrast for the worker fix)', async () => {
+  const { ctx, services } = makeContext()
+  apply(ctx)
+  // Mode auto, plan inactive, policy inherit: a plain subagent child whose
+  // inherited options point at the strong model is re-routed to cheap. The
+  // next test shows a tier_worker child with the same options is not.
+  const plain = makeAgent('plain-child', 'subagent', { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' })
+  for (const fn of ctx.listeners['agent/inbox/inserted']) {
+    fn({ agent: plain, message: { source: { kind: 'user' }, content: [] } })
+  }
+  assert.equal(plain.options.model, 'gpt-5.6-terra')
+})
+
+test('tier_worker child keeps its explicit route and effort when the inbox listener runs first', async () => {
+  // Mirrors the rc.8 in-process driver: the child is created with the
+  // requested agentOptions and its prompt is inserted (agent/inbox/inserted,
+  // source user) synchronously inside start(), before the tool can see the
+  // run handle.
+  const { ctx, services } = makeContext()
+  apply(ctx)
+  const main = makeAgent('main')
+  let childRef = null
+  services.subagents.start = async function (name, request) {
+    childRef = makeAgent('worker-strong', 'subagent', { ...request.agentOptions })
+    for (const fn of ctx.listeners['agent/inbox/inserted']) {
+      fn({ agent: childRef, message: { source: { kind: 'user' }, content: [] } })
+    }
+    this.started.push({ name, request })
+    return {
+      localAgent: childRef,
+      result: Promise.resolve({ output: [{ type: 'text', text: 'worker-ok' }], stopReason: 'stop' }),
+      dispose: async () => {},
+    }
+  }
+  const worker = services.tools.registered.find((t) => t.name === 'tier_worker')
+  await worker.execute({ task: 'hard analysis', tier: 'strong' }, { agent: main, signal: undefined })
+  assert.equal(childRef.options.model, 'deepseek-v4-pro', 'explicit strong worker must not be re-routed to cheap by the subagent policy')
+  const header = childRef.writes.filter((w) => w.kind === 'request/header').at(-1)
+  assert.ok(header, 'header written for the child before its first request')
+  assert.deepEqual(header.payload.header.config, { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' })
+  const status = services.tools.registered.find((t) => t.name === 'tier_status')
+  const out = await status.execute({}, { agent: childRef, signal: undefined })
+  assert.ok(out.status.includes('effective tier for calling agent: strong'), out.status)
+})
+
+test('request-error fallback defers to downstream recovery (dsh-llm-retry) before changing route', async () => {
+  const { ctx, services } = makeContext()
+  apply(ctx)
+  const main = makeAgent('main')
+  const route = services.tools.registered.find((t) => t.name === 'tier_route')
+  await route.execute({ tier: 'cheap' }, { agent: main, signal: undefined })
+  main.writes.length = 0
+  const listener = ctx.listeners['agent/request-error'][0]
+  // Downstream still owns recovery: no header change, its decision is returned.
+  const retried = await listener({ agent: main, failure: { message: 'busy', code: 'RATE_LIMIT', status: 429 } }, async () => ({ kind: 'retry' }))
+  assert.deepEqual(retried, { kind: 'retry' })
+  assert.equal(main.writes.filter((w) => w.kind === 'request/header').length, 0, 'no fallback while downstream retries')
+  // Downstream gave up: the chain advances and the same step retries.
+  const fellBack = await listener({ agent: main, failure: { message: 'busy', code: 'RATE_LIMIT', status: 429 } }, async () => undefined)
+  assert.deepEqual(fellBack, { kind: 'retry' })
+  const headers = main.writes.filter((w) => w.kind === 'request/header')
+  assert.equal(headers.length, 1)
+  assert.equal(headers[0].payload.header.config.model, 'deepseek-v4-flash')
+  // TIMEOUT now counts as an availability failure.
+  main.writes.length = 0
+  await route.execute({ tier: 'cheap' }, { agent: main, signal: undefined })
+  main.writes.length = 0
+  const timedOut = await listener({ agent: main, failure: { message: 'hang', code: 'TIMEOUT' } }, async () => undefined)
+  assert.deepEqual(timedOut, { kind: 'retry' })
+  assert.equal(main.writes.filter((w) => w.kind === 'request/header').length, 1)
+})

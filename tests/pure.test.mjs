@@ -367,3 +367,26 @@ test('DEFAULT_TIER_CONFIG and EFFORT_LADDER match the v0.5.0 contract', () => {
   assert.equal(DEFAULT_TIER_CONFIG.cheap.provider, 'deepseek-official')
   assert.equal(DEFAULT_TIER_CONFIG.cheap.model, 'deepseek-v4-flash')
 })
+
+// ---- v0.5.1: shell wrappers and adapter-emitted availability codes ----------
+
+test('denies rm -rf hidden inside a shell wrapper or eval', () => {
+  assert.ok(hasRecursiveForceRm('sh -c "rm -rf /x"'), 'sh -c double quotes')
+  assert.ok(hasRecursiveForceRm("bash -lc 'rm -rf /x'"), 'bash -lc single quotes')
+  assert.ok(hasRecursiveForceRm('zsh -c rm -rf /x'), 'unquoted wrapper')
+  assert.ok(hasRecursiveForceRm('eval "rm -rf /x"'), 'eval')
+  assert.ok(isHighImpact('bash', { command: 'cd /tmp && sh -c "rm -rf build"' }))
+})
+
+test('shell wrapper detection stays command-position anchored', () => {
+  assert.equal(hasRecursiveForceRm('sh -c "echo rm -rf is text"'), false)
+  assert.equal(hasRecursiveForceRm('sh script.sh'), false)
+  assert.equal(hasRecursiveForceRm('bash -c "ls -la"'), false)
+})
+
+test('classifyFallback: TIMEOUT and NO_ADAPTER (emitted by rc.8 adapters) trigger fallback', () => {
+  assert.equal(classifyFallback({ message: 'timed out', code: 'TIMEOUT' }), 'fallback')
+  assert.equal(classifyFallback({ message: 'no adapter', code: 'NO_ADAPTER' }), 'fallback')
+  assert.ok(FALLBACK_TRIGGER_CODES.includes('TIMEOUT'))
+  assert.ok(FALLBACK_TRIGGER_CODES.includes('NO_ADAPTER'))
+})
